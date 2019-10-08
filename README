@@ -1,0 +1,215 @@
+This directory contains the source files for HRPT reading.
+
+Currently the following are supported:
+
+              From Oleg's tool       From XHRPT    From J-L deframed Modis
+NOAA                                   .raw16
+FY               .C10                  .bin
+Metop            .hpt                  .bin
+MN2              .dat                  .bin
+Aqua MODIS                                              .bin
+
+Use ./hrpt.exe --help for command line explanation - this is essential to do !
+
+
+Building the software is done as follows:
+
+./buildhrpt.sh
+
+This builds hrpt.exe and the support s/w polarstereo.exe, readbin.exe and readbin_modis.exe
+
+as the software is TLE based it needs a TLE file. I download these daily from 
+the web site with a crontab script:
+
+#!/bin/bash
+mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-weather.tle
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/weather.txt
+mv weather.txt $mytlefile
+mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-resource.tle
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/resource.txt
+mv resource.txt $mytlefile
+
+this creates a file like:
+
+20190306-weather.tle
+
+and
+
+20190306-resource.tle
+
+my s/w uses the data from the HRPT filename to find the equivalent date TLE 
+file (and also tries 1 day earlier and later) in that directory.
+
+This directory is defined by an environment variable defined as follows:
+
+Ubuntu Virtualbox VM :
+
+export TLE=/home/fjansen/Win7/TLE/
+
+which under cygwin could be e.g.
+
+export TLE=/cygdrive/d/TLE/
+
+and under WSL:
+
+export TLE=/mnt/d/TLE/
+
+The output from the programs goes to HRPTOUT , also an environment variable.
+
+
+The hrpt.exe program can generate 
+
+- Per channel B/W images
+- A merged 3 channel image and a geometry corrected version
+- A polar stereographic projected 3 channel colour version
+- A few images indicating the swath of the observation and the subsatellite tracked
+  (with an option to also show a defined solar zenith angle 'sunset' line)
+- A intensity histogram plot per channel
+- A cumulative solar zenith angle distribution, used when defining a merge with an 
+  IR channel
+- Merged visual and IR channel images
+
+Usually the program runs as:
+
+./hrpt.exe filename N 221 gapcor project=221 border gamma=0.95
+
+For the FY and NOAA-19 satellites the borders align well with the images. For 
+some reason for NOAA-18 and Metop this is less good. For this there is a 
+theta= option. For Southern passes this is negative, for northern passes 
+positive. This value represents a rotation of the scan angle (in degrees) 
+around the nadir vector to the subsatellite point.
+For MetopC you would normally run:
+
+./hrpt.exe filename N 221 gapcor project=221 border gamma=0.95 theta=2.7
+
+or 
+
+./hrpt.exe filename S 221 gapcor project=221 border gamma=0.95 theta=-2.7
+
+for a southern pass. For NOAA-18 the angle is around 0.7 degree.
+
+If you want to use mergehrpt it is important to get this angle right !!!!!!
+(as it defines the accuracy of the geometric alignment)
+
+The szalim, szamerge and szafact define the IR channel merging. Example:
+
+./hrpt.exe filename N 221 gapcor project=221 gamma=0.95 szalim=85.0 szamerge=4 szafact=1.2
+
+(you can off course also switch on the border and theta= command)
+This would merge the channel 4 IR image multiplied by a factor 1.2 (on top of 
+an auto-normalisation) for all pixels where the solar zenith angle is above 85 
+degrees. There actually is a 'soft' gradual merge from a few degrees below 
+to a few degrees above the user defined value.
+
+The mergehrpt program uses a different command style. Example:
+
+./mergehrpt.exe mergefiles.txt S project=221 gamma=0.95 border bestres
+
+where mergefiles.txt contains:
+
+../Win7/HRPT-Data/Decoded/FY/FY3C_2019-01-19_0945.C10 theta=0.01 linedelay=-6
+../Win7/HRPT-Data/Decoded/Metop/2019-01-19_0959_M02.hpt theta=-2.7 linedelay=3
+
+the theta values are what you derive from the hrpt program as outlined 
+above. IMPORTANT: If you define theta for one file it HAS to appear for all files.
+If you want to use theta as 0 degrees, specify e.g. theta=0.01 but NOT theta=0.0 
+as this has a special meaning inside the s/w (an experimental latitude based auto 
+correction).
+The text file defining which passes to merge can contain five lines at most !
+
+The linedelay option is a subtlety. If on the left side of the images the borders 
+are below the country in the image and on the right hand side the other way around, 
+you need theta to correct. If there is an apparent left and right symmetrical 
+displacement of the borders with the actual countries, you can use linedelay 
+to change the timestamp of all scanlines by a multiple of 167 msec. The FY 
+satellites sometimes suffer from this. A small value should do.
+For mergehrpt the same holds as for theta : if you use it for one file you HAVE TO 
+define it for all. linedelay=0 is an OK option.
+
+TROUBLESHOOTING : 
+
+In case of imagemagick complaints about limits being exceeded:
+
+cat /etc/ImageMagick-6/policy.xml
+
+and check the constraints. I now use in WSL :
+
+  <policy domain="resource" name="memory" value="1GiB"/>
+  <policy domain="resource" name="map" value="2GiB"/>
+  <policy domain="resource" name="width" value="32KP"/>
+  <policy domain="resource" name="height" value="32KP"/>
+  <policy domain="resource" name="area" value="900MB"/>
+  <policy domain="resource" name="disk" value="4GiB"/>
+
+  This also helped me to significantly speed up the sharpen process !
+  
+Currently the s/w runs best in WSL (Windows Subsystem for Linux) :-(
+It allows you to generate ELF exe files, which you need for memory space and cygwin 
+won't allow. Limitation is that it only mounts NTFS HD's and USB devices, NOT a NAS !
+
+Install:
+- In windows 10 search for "feature"  or "turn windows features" and start "turn windows features on or off"
+- Scroll to Windows Subsystem for Linux and enable it, then OK etc etc
+- Go to : https://www.microsoft.com/nl-nl/p/ubuntu-1804-lts/9n9tngvndl3q?rtc=1&activetab=pivot:overviewtab
+- click download and login with microsoft account - if you don't have it, create one
+- You get a number of questions (user, password etc) and end up with a windows command 
+  shell in which you type ubuntu1804 and ubuntu starts
+- In this shell:
+  - sudo apt-get update
+  - sudo apt-get install gfortran
+  - sudo apt-get install imagemagick
+- tar -xvzf hrpt.tgz
+- cd HRPT
+- READ !!!!! the README file
+- ./buildhrpt.sh
+- ./hrpt.exe --help
+
+Go to the top end try setting the environment variables and run an example
+
+
+Enjoy.
+
+Fred Jansen
+
+@redplanet00  (Twitter)
+
+Fred.RocketScientist@gmail.com
+
+====================================================================================
+Known Problems section
+====================================================================================
+-- Corrupted NOAA file (gave no output and also ReadHRPT from David Taylor complained)
+
+I've seen a case of a corrupted NOAA .raw16 file coming from XHRPT. This was the 
+recipe for the cure:
+
+1. Dump the file to a log file on a partition visible to windows:
+
+od -A d -t x1 --width=70 NOAA-19_HRPT_20190309_043441.raw16 >> ../Win7/odraw16.log
+
+2. Open the file in wordpad and do a ctrl-F for:
+
+84 02 6F 01 5C 03 9D 01 0F 02 95
+
+if not found, redo step 1 with e.g. a width of 60 or 71 or something
+
+3. Locate the position of the byte before (!) the start of the signature. Let call this 
+   number N. Then calculate:
+   
+   mod(N,22180)    and letś call the result L
+   
+4. Cut of the dummy info (example) - the + before the number L is crucial :
+
+tail -c +L ../Win7/SDR/To-Process/NOAA-19_HRPT_20190309_043441.raw16 >> NOAA-19_HRPT_20190309_043441.raw16
+
+so in this case L was 3017:
+
+tail -c +3017 ../Win7/SDR/To-Process/NOAA-19_HRPT_20190309_043441.raw16 >> NOAA-19_HRPT_20190309_043441.raw16
+
+5. then run:
+
+./hrpt.exe ./NOAA-19_HRPT_20190309_043441.raw16 S 445 gapcor project=445 gamma=0.9 border debug >& ../Win7/hrpt.log
+
+and check in the log that the records start with the signature hex chain above.
+If so, you were succesful
+
