@@ -196,6 +196,13 @@ c-- Start the loop over the satellites
               c_sat_pass(nrpasses)     = c_sat_use(isat)
               sat_pass_prio(nrpasses)  = i_sat_prio(isat) 
             endif
+            if (npointspass(nrpasses).eq.nmaxpointing) then
+              if (i_pass.eq.1) then
+                if (sat_pass_end(nrpasses).eq.0.0D0) sat_pass_end(nrpasses) = time  + time_offset + dattim(4) * 60.0D0
+              endif
+              i_pass = 0
+              goto 6
+            endif
             npointspass(nrpasses) = npointspass(nrpasses) + 1
             call doytodate(doy, dattim(1), c_datvis)
             call map_azel_place(sat_az, sat_el)
@@ -208,10 +215,11 @@ c-- Start the loop over the satellites
 c          write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5)') sat_az, sat_el, c_datvis, ihr, imn, rsc, doy
           else
             if (i_pass.eq.1) then
-              if (sat_pass_end(nrpasses).eq.0.0D0)sat_pass_end(nrpasses) = time  + time_offset + dattim(4) * 60.0D0
+              if (sat_pass_end(nrpasses).eq.0.0D0) sat_pass_end(nrpasses) = time  + time_offset + dattim(4) * 60.0D0
             endif
             i_pass = 0
           endif
+ 6        continue
         enddo
         i_end(isat) = nrpasses
         call sgp4_end()
@@ -421,25 +429,21 @@ c-- If equal priority ==> highest elevation wins                                
 c-- If priorities differ by 1 point, but elevation of both > 30 degrees ==> highest elevation wins     prio flag 3
 c-- If not the previous bullet  ==> the highest priority wins                                          prio flag 4
 c
-c            write (*,'(''Conflict between passes : '',4I5)')  i, j, key(i), key(j)
+            if (swdebug) write (*,'(''Conflict between passes : '',4I5)')  i, j, key(i), key(j)
             if (sat_pass_prio(key(i)).eq.sat_pass_prio(key(j))) then
               if (sat_el_max_pass(key(i)).gt.sat_el_max_pass(key(j))) then
-c              write (*,*) i, key(i), ' Wins '
                 ok(key(j)) = 0
                 ok(key(i)) = 2
               else
-c              write (*,*) j, key(j), ' Wins '
                 ok(key(i)) = 0
                 ok(key(j)) = 2
               endif
             else
               if (abs(sat_pass_prio(key(i))-sat_pass_prio(key(j))).eq.1.and.sat_el_max_pass(key(i)).gt.elpriothresh.and.sat_el_max_pass(key(j)).gt.elpriothresh) then
                 if (sat_el_max_pass(key(i)).gt.sat_el_max_pass(key(j))) then
-c              write (*,*) i, key(i), ' Wins '
                   ok(key(j)) = 0
                   ok(key(i)) = 3
                 else
-c              write (*,*) j, key(j), ' Wins '
                   ok(key(i)) = 0
                   ok(key(j)) = 3
                 endif
@@ -473,6 +477,7 @@ c      enddo
           write (*,'(I4,F10.2,2(2I5,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, c_sat_pass(key(i))
         endif
       enddo
+c-- The tracks have been sorted and conflicts settled - now implement the commanding as an option ?
       stop
       end
 
