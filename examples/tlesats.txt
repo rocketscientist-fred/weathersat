@@ -1,0 +1,8 @@
+"FENGYUN 3B"   weather   9
+"FENGYUN 3C"   weather   9
+"METOP-A"      weather   5
+"METOP-B"      weather   8
+"METOP-C"      weather   8
+"NOAA 15"      weather   4
+"NOAA 18"      weather   7
+"NOAA 19"      weather   7

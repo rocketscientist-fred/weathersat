@@ -1,0 +1,2 @@
+/mnt/g/HRPT-Data/Decoded/FY/FY3C_2019-01-19_0945.C10 theta=0.01 linedelay=-6
+/mnt/g/HRPT-Data/Decoded/Metop/2019-01-19_0959_M02.hpt theta=-2.7 linedelay=3

@@ -1,0 +1,3 @@
+/mnt/g/HRPT-Data/Decoded/NOAA/NOAA_18_HRPT_20190419_085839.raw16
+/mnt/g/HRPT-Data/Decoded/Metop/MetopB_2019-04-19_0825_M03.hpt
+/mnt/g/HRPT-Data/Decoded/FY/FY3C_2019-04-19_0844.C10
