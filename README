@@ -1,4 +1,25 @@
-This directory contains the source files for HRPT reading.
+This directory contains the source files for HRPT and (AQUA) MODIS reading.
+
+If you don't read this with attention, as well as the ./hrpt.exe --help 
+output, you will fail to successfully run the s/w.
+
+First and most important - it is not at all difficult to make the 
+software crash - I tried to make it robust, but it has many options 
+and by far not all are mutually compatible. Also, there are plenty of
+bugs left, but it CAN work.
+
+This software needs a UNIX environment. Either vintage booted Linux 
+(possibly as a VM), or WSL under windows. Cygwin under windows is 
+possible but does not support the large memory model and would thus 
+not enable processing (AQUA) Modis imagery.
+For WSL installation instructions : see below.
+
+Inside the UNIX environment you need gfortran and ImageMagick.
+
+If your windows machine has < 16 GByte of memory you might not be
+able to use the 'large' memory model (see below) - if that is the case 
+I do not know if the s/w will be able to process 250 m MODIS data.
+For all HRPT a MEDIUM memory model is OK.
 
 Currently the following are supported:
 
@@ -9,16 +30,43 @@ Metop            .hpt                  .bin
 MN2              .dat                  .bin
 Aqua MODIS                                              .bin
 
+I know that for FY using .bin files has a bug that makes 1 in 15 files or so fail.
+If so, use Oleg's s/w to convert to .C10 and have my s/w use the .C10 file.
+
 Use ./hrpt.exe --help for command line explanation - this is essential to do !
 
+To start:
 
-Building the software is done as follows:
+Extract this GITHUB repository in full to a directory named HRPT.
+
+Then get the Google drive file:
+
+https://drive.google.com/file/d/1DV9jHR8bmoTfD5vDIGD6iiShFGfNFrrU/view?usp=sharing
+
+and untar-gzip in the directory containing buildhrpt.sh. This will create a 
+sub-directory resource/ with support files.
+
+Then build the s/w, which is done as follows:
 
 ./buildhrpt.sh
 
+Note this requires gfortran and running the s/w requires imagemagick (see WSL comments below).
 This builds hrpt.exe and the support s/w polarstereo.exe, readbin.exe and readbin_modis.exe
 
-as the software is TLE based it needs a TLE file. I download these daily from 
+The software requires 5 environment variables to run. In my WSL environment they are set 
+as follows:
+
+export TLE=/mnt/y/TLE/
+export HRPTOUT=/mnt/f/Output/
+export MMODEL=LARGE
+export LAT=52.338989
+export LONG=4.709772
+
+set the MMODEL to MEDIUM if AQUA Modis processing is not required.
+adapt LONG and LAT to your position - the setting above puts you smack on top of a Schiphol runway
+for LONG - positive values are Eastern longitude
+
+As the software is TLE based it needs a TLE file. I download these daily from 
 the web site with a crontab script:
 
 #!/bin/bash
@@ -40,60 +88,46 @@ and
 my s/w uses the data from the HRPT filename to find the equivalent date TLE 
 file (and also tries 1 day earlier and later) in that directory.
 
-This directory is defined by an environment variable defined as follows:
-
-Ubuntu Virtualbox VM :
-
-export TLE=/home/fjansen/Win7/TLE/
-
-which under cygwin could be e.g.
-
-export TLE=/cygdrive/d/TLE/
-
-and under WSL:
-
-export TLE=/mnt/d/TLE/
-
-The output from the programs goes to HRPTOUT , also an environment variable.
+This directory is defined by the TLE environment variable defined as above.
+The output from the programs goes to HRPTOUT, see above for my default.
 
 
 The hrpt.exe program can generate 
 
 - Per channel B/W images
-- A merged 3 channel image and a geometry corrected version
+- A merged 3 channel image and a simple geometry corrected version
 - A polar stereographic projected 3 channel colour version
 - A few images indicating the swath of the observation and the subsatellite tracked
   (with an option to also show a defined solar zenith angle 'sunset' line)
-- A intensity histogram plot per channel
+- An intensity histogram plot per channel
 - A cumulative solar zenith angle distribution, used when defining a merge with an 
   IR channel
 - Merged visual and IR channel images
 
 Usually the program runs as:
 
-./hrpt.exe filename N 221 gapcor project=221 border gamma=0.95
+./hrpt.exe filename 221 gapcor project=221 
+
+you can add a border and skip some not essential output:
+
+./hrpt.exe filename 221 gapcor project=221 border fast
+
+or also a gamma:
+
+./hrpt.exe filename 221 gapcor project=221 border fast gamma=1.2
 
 For the FY and NOAA-19 satellites the borders align well with the images. For 
 some reason for NOAA-18 and Metop this is less good. For this there is a 
 theta= option. For Southern passes this is negative, for northern passes 
 positive. This value represents a rotation of the scan angle (in degrees) 
 around the nadir vector to the subsatellite point.
-For MetopC you would normally run:
 
-./hrpt.exe filename N 221 gapcor project=221 border gamma=0.95 theta=2.7
-
-or 
-
-./hrpt.exe filename S 221 gapcor project=221 border gamma=0.95 theta=-2.7
-
-for a southern pass. For NOAA-18 the angle is around 0.7 degree.
-
-If you want to use mergehrpt it is important to get this angle right !!!!!!
-(as it defines the accuracy of the geometric alignment)
+I have tried to set defaults for all parameters which are reasonable - if only 
+as a starting point to experiment. They are indicated when you run with the --help.
 
 The szalim, szamerge and szafact define the IR channel merging. Example:
 
-./hrpt.exe filename N 221 gapcor project=221 gamma=0.95 szalim=85.0 szamerge=4 szafact=1.2
+./hrpt.exe filename 221 gapcor project=221 gamma=0.95 szalim=83.0 szamerge=4 szafact=1.15
 
 (you can off course also switch on the border and theta= command)
 This would merge the channel 4 IR image multiplied by a factor 1.2 (on top of 
@@ -101,11 +135,12 @@ an auto-normalisation) for all pixels where the solar zenith angle is above 85
 degrees. There actually is a 'soft' gradual merge from a few degrees below 
 to a few degrees above the user defined value.
 
-The mergehrpt program uses a different command style. Example:
+The merge option allows to use the first argument as a text file listing the files to be 
+merged. Like:
 
-./mergehrpt.exe mergefiles.txt S project=221 gamma=0.95 border bestres
+./hrpt.exe ./examples/mergefiles.txt 221 project=221 gamma=0.95 histcor merge
 
-where mergefiles.txt contains:
+where mergefiles.txt contains (from an UBUNTU Oracle virtualbox example) :
 
 ../Win7/HRPT-Data/Decoded/FY/FY3C_2019-01-19_0945.C10 theta=0.01 linedelay=-6
 ../Win7/HRPT-Data/Decoded/Metop/2019-01-19_0959_M02.hpt theta=-2.7 linedelay=3
@@ -121,10 +156,29 @@ The linedelay option is a subtlety. If on the left side of the images the border
 are below the country in the image and on the right hand side the other way around, 
 you need theta to correct. If there is an apparent left and right symmetrical 
 displacement of the borders with the actual countries, you can use linedelay 
-to change the timestamp of all scanlines by a multiple of 167 msec. The FY 
-satellites sometimes suffer from this. A small value should do.
-For mergehrpt the same holds as for theta : if you use it for one file you HAVE TO 
-define it for all. linedelay=0 is an OK option.
+to change the timestamp of all scanlines by a multiple of 167 msec (different for 
+AQUA MODIS). The FY satellites sometimes suffer from this. A small value should do.
+
+An example of a MODIS processing command line, using files from Jean-Luc:
+
+./hrpt.exe ./examples/panmodis.txt 221 gapcor project histcor modispan=correct binary merge reflong=70.0 border=highres
+
+with panmodis.txt containing :
+
+/mnt/f/AQ_MODIS-2019-09-29-1700.bin
+/mnt/f/AQ_MODIS-2019-09-29-1700.bin
+/mnt/f/AQ_MODIS-2019-09-29-1700.bin
+
+This somewhat silly construct is because it uses the batch/merge concept that already 
+was built in to the S/W.
+
+I will try to answer questions you have, but you should realise I do have a busy 
+daytime job and often am travelling. Also, most likely I will need a copy of your 
+file to try and reproduce the problem.
+
+Finally, the s/w is reasonably fast (a few minutes per HRPT file), but an AQUA MODIS 
+true colour with the modispan option easily takes 45 minutes and if you add sharpen, 
+add another hour (but its worth it !!)
 
 TROUBLESHOOTING : 
 
@@ -146,6 +200,8 @@ and check the constraints. I now use in WSL :
 Currently the s/w runs best in WSL (Windows Subsystem for Linux) :-(
 It allows you to generate ELF exe files, which you need for memory space and cygwin 
 won't allow. Limitation is that it only mounts NTFS HD's and USB devices, NOT a NAS !
+
+It also runs fine on UBUNTU as an ORACLE Virtualbox VM, but slower.
 
 Install:
 - In windows 10 search for "feature"  or "turn windows features" and start "turn windows features on or off"
@@ -213,3 +269,4 @@ tail -c +3017 ../Win7/SDR/To-Process/NOAA-19_HRPT_20190309_043441.raw16 >> NOAA-
 and check in the log that the records start with the signature hex chain above.
 If so, you were succesful
 
+or use a HEX editor, search for the signature and cut out the part before.
