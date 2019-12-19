@@ -217,10 +217,32 @@ Install:
 - tar -xvzf hrpt.tgz
 - cd HRPT
 - READ !!!!! the README file
+- Define the MMODEL environment variable BEFORE compiling
 - ./buildhrpt.sh
 - ./hrpt.exe --help
 
 Go to the top end try setting the environment variables and run an example
+
+
+Basic instructions for a virtualbox setup:
+
+- Install the latest Oracle Virtualbox
+- Download the latest Ubuntu LTS ISO with the "amd64" in the title (also supports Intel)
+- In virtual box click new and follow all the steps 
+  - I would recommen 8 GByte or better for the memory setting
+- Finish the VM installation to the end and it will do a reboot
+- Start a terminal
+- sudo apt-get install gfortran
+- sudo apt-get install imagemagick
+- sudo apt-get install git
+- git clone - get the link from the github page (pulldown button)
+- cd weathersat
+- Download the google drive file referred to in the README and install here
+- uname -a and ensure it has x86_64 as its machine model
+- Define the environment variable
+- chmod 744 ./buildhrpt.sh
+- ./buildhrpt.sh
+- and it should work
 
 
 Enjoy.
