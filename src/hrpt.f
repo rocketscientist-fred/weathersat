@@ -60,7 +60,7 @@ c      parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=270000000, n_s
       parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=300000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
 #endif
 #ifdef MEDIUM
-      parameter (nmaxlin=12000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
+      parameter (nmaxlin=11000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
 #endif
 c
       integer*1 linevalid(nmaxlin), satch_valid(nmaxlin), stereo_count(nstereo,3)
@@ -3993,7 +3993,7 @@ c
       integer*4 j, nlines, i
       character*1 csq, cdq
       character*450 cstring2
-      character*500 imgname, command, cinput, cstring, cfilebatch
+      character*1000 imgname, command, cinput, cstring, cfilebatch
 c
       if (nlines_in.lt.0) then
         call get_command(cinput)
@@ -6558,7 +6558,7 @@ c
       write (*,'(a)') '  merge         ==> A complex option to merge multiple images from different passes and different satellites. It also is required by the modispan option for Aqua MODIS truecolour processing'
       write (*,'(a)') '                ==> The first - filename - argument of the command line contains the files to be merged - or in case of panmodis, 3 (!!!! YES 3) times the same filename'
       write (*,'(a)') '                ==> In this text file after the filename you can specify non-standard theta and ilinedelay value - but if used once it needs (!!!!) to be present on all the lines'
-      write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 me and 500 m data)'
+      write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 m and 500 m data)'
       write (*,'(a)') '                ==> Example : ./hrpt.exe panmodis.txt 221 gapcor project=121 gammargb=0.92,0.98,0.92 fast histcor binary merge modispan=correct'
       write (*,'(a)') '  gammargb=x,y,z => Used to specify separate gammas for R, G and B example - gammargb=0.92,0.98,0.92 - only applied to the projected or the border image - note : it changes (slightly) the border and longlat colours'
       write (*,'(a)') ''
