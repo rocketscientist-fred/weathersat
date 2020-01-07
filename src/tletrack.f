@@ -23,7 +23,7 @@ c
       integer*4 dattim(8), luntle, iyr_tle, doy, i, j, ihr, imn, i_year, i_month, i_day, i_pass, i_track, lunsat, nsatuse, ios, isat
       integer*4 i_arg1, i_arg, ihr1, ihr2, imn1, imn2
       integer*2 npos
-      logical foundtle, swdebug, swdiag
+      logical foundtle, swdebug, swdiag, swlive, swallowflip
       character*5   c_zone
       character*8   c_date, c_datvis
       character*10  c_time
@@ -54,10 +54,15 @@ c--
 c-- with the first " left aligned in column 1 !
 c--
 c--   Second argument is the type  of TLE : resource or weather IF the first argument is not an indirect !
+c--                   NOT required if first argument is reference to indirect list (using @)
 c--
 c--   Further arguments:  
 c--
 c--     beam=1.8  as beamwidth of dish to be used
+c--     debug     show the commands that would be issued for reactive and pro-active (look ahead)
+c--     diag      show the az el values at each time step for reactive and pro-active (look ahead) - L....o....n....g
+c--     live      actually command the hardware
+c--     flip      allow dish flip mode if crossing the N vector
 c
 c-- The TLE environment variable defines where to find the TLE files
 c
@@ -68,6 +73,8 @@ c
       secsubsteps     = 5.0D0
       swdebug         = .false.
       swdiag          = .false.
+      swlive          = .false.
+      swallowflip     = .false.
 c-- If two satellites passes have a conflict and their priorities differ by 1 and their max elevations are above this limit : the max elevation wins
       elpriothresh    = 30.0D0
 c
@@ -76,7 +83,6 @@ c
         sat_pass_end(i)   = 0.0D0
         ok(i)             = 1
       enddo
-c
       call getarg(1, argstring)
       if (argstring(1:1).eq.'@') then
         call get_lun(lunsat)
@@ -127,13 +133,23 @@ c
       endif
       do i = i_arg1, 20
         call getarg(i, argstring)
-        if (index(argstring(1:lnblnk(argstring)),'debug').ne.0) swdebug = .true.
-        if (index(argstring(1:lnblnk(argstring)),'diag').ne.0)  swdiag  = .true.
+        if (index(argstring(1:lnblnk(argstring)),'debug').ne.0) swdebug      = .true.
+        if (index(argstring(1:lnblnk(argstring)),'diag').ne.0)  swdiag       = .true.
         if (index(argstring(1:lnblnk(argstring)),'beam=').ne.0) then
           call string_to_r8(argstring(index(argstring,'beam=')+5:lnblnk(argstring)), npos, track_angle)
           write (*,'(''Modified track angle                     : '',F10.3)') track_angle
         endif
+        if (index(argstring(1:lnblnk(argstring)),'live').ne.0)  swlive       = .true.
+        if (index(argstring(1:lnblnk(argstring)),'flip').ne.0)  swallowflip  = .true.
       enddo
+c-- Check if dish alive and aligned - using visual inspection from my study :-)
+      if (swlive) then
+        call SPID_MD02(249.2D0, 0.0D0, swdebug, .false.)
+        write (*,'(''If dish moved and aligned press enter :'')')
+        read (*,*)
+        call SPID_MD02(209.0D0, 0.0D0, swdebug, .false.)
+      endif
+c
       write (*,'(''Satellites in use (name, type, priority) : '')')
       do i = 1,nsatuse
         write (*,'(a,a,i5)') c_sat_use(i), c_sat_type(i), i_sat_prio(i)
@@ -173,7 +189,7 @@ c-- Start the loop over the satellites
         read (tlestring(21:32),*) doy_tle
         close (unit=luntle)
         if (swdebug) write (*,'(''TLE Reference date : '',I5,2x,F8.2)') iyr_tle, doy_tle
-        call map_azel_init()
+c        call map_azel_init()
         call sgp4_init(ro, vo, long, lat)
         time        = time_start
         time_offset = 0.0D0
@@ -185,7 +201,7 @@ c-- Start the loop over the satellites
             time        = time        - 86400.0D0
             time_offset = time_offset + 86400.0D0
           endif
-          call run_TLE(time, doy, ro, vo, long, lat, theta0g, doy_tle)
+          call run_TLE(time, doy, ro, vo, long, lat, theta0g, doy_tle, iyr_tle, dattim(1))
           call azel(long, lat, ro, sat_az, sat_el)
           if (sat_el.gt.0.0D0) then
             if (i_pass.eq.0) then
@@ -205,7 +221,7 @@ c-- Start the loop over the satellites
             endif
             npointspass(nrpasses) = npointspass(nrpasses) + 1
             call doytodate(doy, dattim(1), c_datvis)
-            call map_azel_place(sat_az, sat_el)
+c            call map_azel_place(sat_az, sat_el)
             ihr = int(time/3600.0D0)
             imn = (int(time - dble(ihr)*3600.0D0)/60.0D0)
             rsc = time - dble(ihr)*3600.0D0 - imn * 60.0D0
@@ -223,7 +239,7 @@ c          write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5)') sat_az, sat_el, c_datvis,
         enddo
         i_end(isat) = nrpasses
         call sgp4_end()
-        call map_azel_write(command)
+c        call map_azel_write(command)
         write (*,*)
         write (*,'(''Pass # Secs   Max El   Time of max El        SAT ID       #LA Commands'')')
         do i = i_start(isat), i_end(isat)
@@ -478,17 +494,37 @@ c      enddo
         endif
       enddo
 c-- The tracks have been sorted and conflicts settled - now implement the commanding as an option ?
+      write (*,*)
+      do i = 1, nrpasses
+        if (ok(key(i)).ge.1) then
+          if (swlive) then
+            ihr1 = int(mod(sat_pass_start(i),86400.0D0) / 3600.0D0)
+            imn1 =    (mod(sat_pass_start(i),86400.0D0) - dble(ihr1)*3600.0D0)/60.0D0
+            rsc1 =     mod(sat_pass_start(i),86400.0D0) - dble(ihr1)*3600.0D0 - imn1 * 60.0D0
+            ihr2 = int(mod(sat_pass_end(key(i)),86400.0D0) / 3600.0D0)
+            imn2 =    (mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0)/60.0D0
+            rsc2 =     mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0 - imn2 * 60.0D0
+            write (*,'(I4,F10.2,2(2I5,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, c_sat_pass(key(i))
+            call azel_command(sat_pass_start(i), sat_pass_end(key(i)), time_track_la(1,key(i)), sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), n_track_la(key(i)), swdebug, swallowflip)
+          endif
+        endif
+      enddo
       stop
       end
 
-      subroutine run_tle(linetime,linedoy, ro, vo, long, lat, theta0g, doy_tle)
+      subroutine run_tle(linetime,linedoy, ro, vo, long, lat, theta0g, doy_tle, iyr_tle, iyr_now)
       implicit none
-      integer*4 linedoy
+      integer*4 linedoy, iyr_tle, iyr_now, diy
       real*8 linetime, ro(3), vo(3), long, lat, doy_tle
 c
       real*8    Tmfe, theta0g
       save
-      Tmfe = ((linetime/86400.0D0) + dble(linedoy) - doy_tle) * 1440.0
+      diy = 0
+      if (iyr_now.ne.iyr_tle) then
+        diy = 365
+        if (mod(iyr_tle,4).eq.0.and.iyr_tle.ne.2000) diy = diy + 1
+      endif
+      Tmfe = ((linetime/86400.0D0) + dble(linedoy + diy) - doy_tle) * 1440.0D0
       call sgp4_run(Tmfe, ro, vo, long, lat, theta0g)
       return
       end
@@ -1020,4 +1056,120 @@ c
       if (l.lt.r) goto 2
  12   if (s.ne.0) goto 1
       return
+      end
+
+      subroutine azel_command(pass_start, pass_end, time_track, sat_az_track, sat_el_track, n, swdebug, swallowflip)
+      implicit none
+      integer*4 n
+      real*8    pass_start, pass_end, time_track(n), sat_az_track(n), sat_el_track(n)
+      logical   swdebug, swallowflip
+c
+      logical   swflip
+      real*8    rsc, time_now, time_sleep, time_start
+      integer*4 i, j, ihr, imn, dattim(8), doy
+      character*5  c_zone
+      character*8  c_date
+      character*10 c_time
+      character*50 c_command
+c-- Check if Flip mode required
+      swflip = .false.
+      do j = 1, n-1
+        if (abs(sat_az_track(j+1) - sat_az_track(j)).gt.250.0D0.and.swallowflip) then
+          swflip = .true.
+          write (*,'(''Using FLIP mode !'')')
+        endif
+      enddo
+      call date_and_time(c_date, c_time, c_zone, dattim)
+c      write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), dattim(6), dattim(7), dattim(8)
+      time_now = dble(dattim(5) * 3600.0 + dattim(6) * 60.0 + dattim(7) + dattim(8)/1000.0)
+      time_sleep = pass_start - time_now - 60.0D0
+c-- Skip ongoing passes ?
+      if (time_sleep.lt.0.0) return
+      write (c_command,'(''sleep '',F8.1)') time_sleep
+c      write (*,*) c_command(1:lnblnk(c_command))
+      call system(c_command)
+      j = 1
+      ihr = int(time_track(j)/3600.0D0)
+      imn = (int(time_track(j) - dble(ihr)*3600.0D0)/60.0D0)
+      rsc = time_track(j) - dble(ihr)*3600.0D0 - imn * 60.0D0
+      write (*,'(I5,3x,2F10.3,2I5,F10.3)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc
+      call SPID_MD02(sat_az_track(j), sat_el_track(j), swdebug, swflip)
+      do j = 2,n
+        call date_and_time(c_date, c_time, c_zone, dattim)
+c        write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), dattim(6), dattim(7), dattim(8)
+        time_now = dble(dattim(5) * 3600.0 + dattim(6) * 60.0 + dattim(7) + dattim(8)/1000.0)
+        time_sleep = time_track(j) - time_now - 0.2
+        write (c_command,'(''sleep '',F8.1)') time_sleep
+c        write (*,*) c_command(1:lnblnk(c_command))
+        call system(c_command)
+c-- Track real time
+ 1      call date_and_time(c_date, c_time, c_zone, dattim)
+        time_now = dble(dattim(5) * 3600.0 + dattim(6) * 60.0 + dattim(7) + dattim(8)/1000.0)
+        time_sleep = time_track(j) - time_now
+        if (time_sleep.lt.0.) then
+c          write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), dattim(6), dattim(7), dattim(8)
+          ihr = int(time_track(j)/3600.0D0)
+          imn = (int(time_track(j) - dble(ihr)*3600.0D0)/60.0D0)
+          rsc = time_track(j) - dble(ihr)*3600.0D0 - imn * 60.0D0
+          write (*,'(I5,3x,2F10.3,2I5,F10.3)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc
+          call SPID_MD02(sat_az_track(j), sat_el_track(j), swdebug, swflip)
+          goto 2
+        endif
+        goto 1
+ 2      continue
+      enddo
+      call SPID_MD02(209.0D0, 0.0D0, swdebug, swflip)
+      return
+      end
+
+      subroutine SPID_MD02(Az, El, swdebug, swflip)
+      implicit none
+      real*8  Az, El
+      logical swdebug, swflip
+c
+      integer*1 devbuf(13), statbuf(13), unkbuf(13), inbuf1(13), inbuf2(13), dumbuf(13)
+      integer*4 lun, init, i, irec, ios
+      real*8 Azuse, Eluse
+      character*4 cangle
+      data init/0/
+      data statbuf/'57'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'1F'x,'20'x/
+      data unkbuf /'57'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'3F'x,'20'x/
+c
+      save
+c
+      if (init.eq.0) then
+        init = 1
+        irec = 1
+        call get_lun(lun)
+        open (unit=lun,file='/dev/ttyS4',access='direct',recl=13)
+      endif
+      Azuse = min(max(Az,0.0D0),360.0D0)
+      Eluse = min(max(El,0.0D0), 90.0D0)
+      if (swflip) then
+        Azuse = mod((Azuse + 180.0D0),360.0D0)
+        Eluse = 180.0D0 - Eluse
+      endif
+      write (cangle,'(I4.4)') nint(5.0D0 * (Azuse + 360.0D0))
+      devbuf( 1) = '57'x
+      devbuf( 2) = ichar(cangle(1:1))
+      devbuf( 3) = ichar(cangle(2:2))
+      devbuf( 4) = ichar(cangle(3:3))
+      devbuf( 5) = ichar(cangle(4:4))
+      devbuf( 6) = '05'x
+      write (cangle,'(I4.4)') nint(5.0D0 * (Eluse + 360.0D0))
+      devbuf( 7) = ichar(cangle(1:1))
+      devbuf( 8) = ichar(cangle(2:2))
+      devbuf( 9) = ichar(cangle(3:3))
+      devbuf(10) = ichar(cangle(4:4))
+      devbuf(11) = '05'x
+      devbuf(12) = '2F'x
+      devbuf(13) = '20'x
+      if (swdebug) write (*,'(4(Z2.2,1x),2x,4(Z2.2,1x))') (devbuf(i), i = 2,5), (devbuf(i), i = 7,10)
+      write (lun,rec=irec) devbuf
+      irec = irec + 1
+      write (lun,rec=irec) statbuf
+      irec = irec + 1
+      write (lun,rec=irec) unkbuf
+      irec = irec + 1
+ 1    return
       end
