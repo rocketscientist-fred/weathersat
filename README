@@ -1,4 +1,5 @@
 This directory contains the source files for HRPT and (AQUA) MODIS reading.
+(And a beta version of some tracking s/w using what I call look-ahead)
 
 If you don't read this with attention, as well as the ./hrpt.exe --help 
 output, you will fail to successfully run the s/w.
@@ -19,7 +20,7 @@ Inside the UNIX environment you need gfortran and ImageMagick.
 If your windows machine has < 16 GByte of memory you might not be
 able to use the 'large' memory model (see below) - if that is the case 
 I do not know if the s/w will be able to process 250 m MODIS data.
-For all HRPT a MEDIUM memory model is OK.
+For all HRPT files a MEDIUM memory model is OK.
 
 Currently the following are supported:
 
@@ -29,6 +30,7 @@ FY               .C10                  .bin
 Metop            .hpt                  .bin
 MN2              .dat                  .bin
 Aqua MODIS                                              .bin
+Terra MODIS                                             .bin
 
 I know that for FY using .bin files has a bug that makes 1 in 15 files or so fail.
 If so, use Oleg's s/w to convert to .C10 and have my s/w use the .C10 file.
@@ -67,7 +69,7 @@ adapt LONG and LAT to your position - the setting above puts you smack on top of
 for LONG - positive values are Eastern longitude
 
 As the software is TLE based it needs a TLE file. I download these daily from 
-the web site with a crontab script:
+the web site with a crontab script (you need to modify the local directories in here !) :
 
 #!/bin/bash
 mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-weather.tle
@@ -87,6 +89,17 @@ and
 
 my s/w uses the data from the HRPT filename to find the equivalent date TLE 
 file (and also tries 1 day earlier and later) in that directory.
+
+If you have set the TLE environment variable, this script could look like:
+
+#!/bin/bash
+mytlefile=$TLE`(date +%Y%m%d)`-weather.tle
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/weather.txt
+mv weather.txt $mytlefile
+mytlefile=$TLE`(date +%Y%m%d)`-resource.tle
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/resource.txt
+mv resource.txt $mytlefile
+
 
 This directory is defined by the TLE environment variable defined as above.
 The output from the programs goes to HRPTOUT, see above for my default.
@@ -214,13 +227,39 @@ Install:
   - sudo apt-get update
   - sudo apt-get install gfortran
   - sudo apt-get install imagemagick
-- tar -xvzf hrpt.tgz
-- cd HRPT
+- git clone <Insert the github link here>
+- cd weathersat
+- Download and unback the resource file from my google drive (see above)
 - READ !!!!! the README file
+- Define the MMODEL environment variable BEFORE compiling
+- chmod 744 buildhrpt.sh
 - ./buildhrpt.sh
 - ./hrpt.exe --help
 
 Go to the top end try setting the environment variables and run an example
+
+
+Basic instructions for a virtualbox setup:
+
+- First note that on most computers running a 64 bit VM requires the virtualisation setting 
+  in the BIOS to be enabled !
+- Install the latest Oracle Virtualbox
+- Download the latest Ubuntu LTS ISO with the "amd64" in the title (also supports Intel)
+- In virtual box click new and follow all the steps 
+  - I would recommen 8 GByte or better for the memory setting
+- Finish the VM installation to the end and it will do a reboot
+- Start a terminal
+- sudo apt-get install gfortran
+- sudo apt-get install imagemagick
+- sudo apt-get install git
+- git clone - get the link from the github page (pulldown button)
+- cd weathersat
+- Download the google drive file referred to in the README and install here
+- uname -a and ensure it has x86_64 as its machine model
+- Define the environment variables
+- chmod 744 ./buildhrpt.sh
+- ./buildhrpt.sh
+- and it should work
 
 
 Enjoy.
