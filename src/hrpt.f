@@ -60,7 +60,7 @@ c      parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=270000000, n_s
       parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=300000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
 #endif
 #ifdef MEDIUM
-      parameter (nmaxlin=12000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
+      parameter (nmaxlin=11000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
 #endif
 c
       integer*1 linevalid(nmaxlin), satch_valid(nmaxlin), stereo_count(nstereo,3)
@@ -92,7 +92,7 @@ c
       real*8    theta0g, thetascan, theta_in, szalim, w1, w2, w3, szafact, rlinedelay, theta_start, theta_end, theta_step, etascan, eta_in, aqmtheta(2), bowgamma, rpos
       logical   swnorth, swfy, swnoaa, swmetop, swgapcor, swswath, swdebug, swproject, swborder, swgamma, swtheta, swszalim, swszamer, swlinedelay, swhybrid, swfast, swthetascan, swyiq
       logical   swbatch, swbatchnight, swhorizon, swsharp, swtruech, swbin, swopacity, swmonitor, swhistcor, swlonglat, swbcol, swllcol, swmn2, sweta, swaqmod, sw12bit
-      logical   swreflong, swreadbindone, swborderhighres, swcorrect, swok, swbowt, swmerge, swlastmerge, swfirstmerge, swgammargb, swbowgamma, swgammargb_in, swprojecteq
+      logical   swreflong, swreadbindone, swborderhighres, swcorrect, swok, swbowt, swmerge, swlastmerge, swfirstmerge, swgammargb, swbowgamma, swgammargb_in, swprojecteq, swterra
       character*4   cfy, cmetop, cscan, cmn2, caqmod
       character*6   cnoaa
       character*9   cgamma
@@ -178,6 +178,7 @@ c-- Arguments from 3 onwards have no fixed order - set the initial values
       bgamma          = 1.0
       bowgamma        = 0.0
       swbowgamma      = .false.
+      swterra         = .false.
 c-- Check if modis !! In that case, 12 bit colours. Also check the modis resolution required.
       do i_arg = 3,30
         call getarg(i_arg, argstring)
@@ -820,6 +821,62 @@ c-- Define the AQUA MODIS x offsets !
         xchoff(4) =  0
         xchoff(5) =  0
       endif
+      if (index(filedata,'TE_MODIS').ne.0) then
+        nchan   = 5
+        if (swaqm250) nchan = 2
+        swmetop = .false.
+        swfy    = .false.
+        swnoaa  = .false.
+        swmn2   = .false.
+        swaqmod = .true.
+        swterra = .true.
+        caqmod  = '.dat'
+        ir      = 2
+        ig      = 2
+        ib      = 1
+        nrecl   = 2708
+c-- Initialise the projection correction arrays
+c-- Remember that the IFOV (= pixel size) is BIGGER than the sampling interval !
+        sat_avg_alt  = 705.0
+        sat_fov      = 55.00 * 2.0
+        if (swaqm1000) nsat_pix = 1354
+        if (swaqm500)  nsat_pix = 2708
+        if (swaqm250)  nsat_pix = 5416
+        nrecl        = nsat_pix * 2
+        ncorrect_pix =  0
+        nvisch       =  1
+c-- Copy from AQUA above
+c-- Remember (!!!) thetascan is defined for a southern pass - the sign reversal for a Northern pass is done further down in the code !
+        if (.not.swlinedelay) then
+          ilinedelay   = -15
+          swlinedelay  = .true.
+        endif
+        thetascan    =  0.100D0
+        etascan      =  0.0D0
+c-- Switch on the bowgamma => the best solution over a linear 0.18 - 0.42 bowtie slope
+        if (.not.swbowgamma) then
+          swbowgamma = .true.
+          bowgamma   = 1.6
+        endif
+c-- For TERRA Modis modispan switch on the gammargb by default !!
+        if ((.not.swgammargb_in).and.swaqmpan) then
+          swgammargb = .true.
+          rgamma = 0.95
+          ggamma = 0.99
+          bgamma = 0.93
+        endif
+        if ((.not.swprojecteq).and.swaqmpan) then
+          irp = 1
+          igp = 2
+          ibp = 1
+        endif
+c-- Define the TERRA MODIS x offsets ! 
+        xchoff(1) =  0
+        xchoff(2) =  0
+        xchoff(3) =  0
+        xchoff(4) =  0
+        xchoff(5) =  0
+      endif
 c-- In case of merge get the linedelay and/or theta (if defined in the merge file - remember, if it's there on 1 line it has to be there for all !!) and override the defaults here
       if (swmerge.and.swlinedelay_merge) then
         ilinedelay  = ilinedelay_in_merge(i_merge)
@@ -1047,11 +1104,12 @@ c
       do while (linevalid(i).ne.1.and.i.le.irec)
         i = i + 1
       enddo
-      if (swfy)    call init_TLE('FY', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
-      if (swnoaa)  call init_TLE('NO', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
-      if (swmetop) call init_TLE('ME', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
-      if (swmn2)   call init_TLE('M2', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
-      if (swaqmod) call init_TLE('AM', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swfy)                       call init_TLE('FY', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swnoaa)                     call init_TLE('NO', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swmetop)                    call init_TLE('ME', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swmn2)                      call init_TLE('M2', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swaqmod.and.(.not.swterra)) call init_TLE('AM', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
+      if (swterra)                    call init_TLE('TE', filedata(1:lnblnk(filedata)), linedoy(i), doyfile)
 c-- I have seen the doy in file on NOAA being wrong - correct with date in filename
       if (swnoaa) then
         if (doyfile.ne.linedoy(i)) then
@@ -1765,8 +1823,10 @@ c-- Take care of some of the bowtie correction latitude sequence subtleties to p
 c-- The rpos = 0.35 is an experimental value that closes the "gaps" at the 20 pixel boundaries in the 500 m image as a consequence of the bowtie latitude jump filter below
 c-- Still don't understand it
               if (swaqmod) then
-                if (swnorth.and.(longlat(2,k,i  ).lt.longlat(2,k,i-1).or.longlat(2,k+1,i  ).lt.longlat(2,k+1,i-1)).and.rpos.gt.0.35) swok = .false.
-                if (swnorth.and.(longlat(2,k,i+1).lt.longlat(2,k,i  ).or.longlat(2,k+1,i+1).lt.longlat(2,k+1,i  )).and.rpos.gt.0.35) swok = .false.
+                if (swnorth       .and.(longlat(2,k,i  ).lt.longlat(2,k,i-1).or.longlat(2,k+1,i  ).lt.longlat(2,k+1,i-1)).and.rpos.gt.0.35) swok = .false.
+                if (swnorth       .and.(longlat(2,k,i+1).lt.longlat(2,k,i  ).or.longlat(2,k+1,i+1).lt.longlat(2,k+1,i  )).and.rpos.gt.0.35) swok = .false.
+                if ((.not.swnorth).and.(longlat(2,k,i  ).gt.longlat(2,k,i-1).or.longlat(2,k+1,i  ).gt.longlat(2,k+1,i-1)).and.rpos.gt.0.35) swok = .false.
+                if ((.not.swnorth).and.(longlat(2,k,i+1).gt.longlat(2,k,i  ).or.longlat(2,k+1,i+1).gt.longlat(2,k+1,i  )).and.rpos.gt.0.35) swok = .false.
 c-- The usual ndiv to be used for HRPT and inner part of AQUA Modis
                 ndivuse = 4
 c-- The ndiv to be used for the middle part of AQUA Modis
@@ -1775,14 +1835,15 @@ c-- The ndiv to be used for the outermost part of AQUA Modis
                 if (rpos.gt.0.80) ndivuse = 8
 c-- The ndiv to be used for the outer-outermost part of AQUA Modis :-)
                 if (rpos.gt.0.90) ndivuse = 10
-c-- Sanity check to prevent crashing if ndivuse > ndivgrid
               else
 c-- The usual ndiv to be used for inner part of HRPT
                 ndivuse = 4
 c-- The ndiv to be used for the outer part of HRPT
                 if (rpos.gt.0.70) ndivuse = 6
-c-- Sanity check to prevent crashing if ndivuse > ndivgrid
               endif
+c-- Uncomment the following line if you simply want to see a projected image of the ORIGINAL pixels - without interpolation etc etc
+c              ndivuse = 1
+c-- Sanity check to prevent crashing if ndivuse > ndivgrid
               ndivuse = min(ndivuse, ndivgrid)
 c
 c-- First the code to take care of the merging of an IR channel based on Solar Zenith Angle
@@ -1961,13 +2022,8 @@ c
                     endif
                   endif
                 endif
-c
 c-- Then the code for the normal imaging (with the opacity part) - Lots of code repeat here !! (need to clean up)
-c
               else
-c                pixcol(1) = int(0.75 * float(satch_image(k,2,i)) + 0.1875 * float(satch_image(k,1,i)))
-c                pixcol(2) = int(0.75 * float(satch_image(k,2,i)) + 0.1875 * float(satch_image(k,2,i)))
-c                pixcol(3) = int(0.75 * float(satch_image(k,1,i)) + 0.1875 * float(satch_image(k,3,i)))
 c-- Map to IQ colours to try and separate the land
                 dr = float(satch_image(k,irp,i))
                 dg = float(satch_image(k,igp,i))
@@ -2006,49 +2062,88 @@ c-- Map to IQ colours to try and separate the land
      *                               longlat(1,k,i), longlat(1,k+1,i), longlat(1,k,i+1), longlat(1,k+1,i+1), satch_valb_op, satch_ll, ndivuse)
                   endif
                   if (swok) then
-                    do l = 1, ndivuse
-                      do j = 1, ndivuse
-                        if (swopacity.and.(.not.swbatchnight)) then
-                          pixcol(1) = wop1 * fetch_pixel(satch_valr, ndivuse, j, l) + wop2 * fetch_pixel(satch_valr_op, ndivuse, j, l)
-                          pixcol(2) = wop1 * fetch_pixel(satch_valg, ndivuse, j, l) + wop2 * fetch_pixel(satch_valg_op, ndivuse, j, l)
-                          pixcol(3) = wop1 * fetch_pixel(satch_valb, ndivuse, j, l) + wop2 * fetch_pixel(satch_valb_op, ndivuse, j, l)
+                    if (ndivuse.eq.1) then
+                      if (swopacity.and.(.not.swbatchnight)) then
+                        pixcol(1) = wop1 * satch_image(k  ,irp,i) + wop2 * satch_image(k  , opchr,i)
+                        pixcol(2) = wop1 * satch_image(k  ,igp,i) + wop2 * satch_image(k  , opchg,i)
+                        pixcol(3) = wop1 * satch_image(k  ,ibp,i) + wop2 * satch_image(k  , opchb,i)
+                      else
+                        if (swmerge.and.swaqmpan) then
+                          if (i_merge.eq.3) then
+                            pixcol(1) = 0
+                            pixcol(2) = 0
+                            pixcol(3) = satch_image(k  , ibp, i)
+                          else if (i_merge.eq.2) then
+                            pixcol(1) = 0
+                            pixcol(2) = satch_image(k  , igp, i)
+                            pixcol(3) = 0
+                          else if (i_merge.eq.1) then
+                            pixcol(1) = satch_image(k  , irp, i)
+                            pixcol(2) = 0
+                            pixcol(3) = 0
+                          endif
+                        else
+                          pixcol(1) = satch_image(k  , irp, i)
+                          pixcol(2) = satch_image(k  , igp, i)
+                          pixcol(3) = satch_image(k  , ibp, i)
+                        endif
+                      endif
+                      long_stereo = (longlat(1,k,i) + longlat(1,k+1,i)) / 2.0D0
+                      lat_stereo  = (longlat(2,k,i) + longlat(2,k+1,i)) / 2.0D0
+                      if (swaqmod) then
+                        if (swaqmpan) then
+                          call map_stereo_zoom_place_aqm_pan(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol,i_merge)
+                        else
+                          call map_stereo_zoom_place_aqm(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol)
+                        endif
+                      else
+                        call map_stereo_zoom_place(stereo_image,3,nxs,nys,long_stereo, lat_stereo, pixcol)
+                      endif
+                    else
+                      do l = 1, ndivuse
+                        do j = 1, ndivuse
+                          if (swopacity.and.(.not.swbatchnight)) then
+                            pixcol(1) = wop1 * fetch_pixel(satch_valr, ndivuse, j, l) + wop2 * fetch_pixel(satch_valr_op, ndivuse, j, l)
+                            pixcol(2) = wop1 * fetch_pixel(satch_valg, ndivuse, j, l) + wop2 * fetch_pixel(satch_valg_op, ndivuse, j, l)
+                            pixcol(3) = wop1 * fetch_pixel(satch_valb, ndivuse, j, l) + wop2 * fetch_pixel(satch_valb_op, ndivuse, j, l)
 c                          pixcol(1) = wop1 * satch_valr(j,l) + wop2 * satch_valr_op(j,l)
 c                          pixcol(2) = wop1 * satch_valg(j,l) + wop2 * satch_valg_op(j,l)
 c                          pixcol(3) = wop1 * satch_valb(j,l) + wop2 * satch_valb_op(j,l)
-                        else
-                          if (swmerge.and.swaqmpan) then
-                            if (i_merge.eq.3) then
-                              pixcol(1) = 0
-                              pixcol(2) = 0
-                              pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
-                            else if (i_merge.eq.2) then
-                              pixcol(1) = 0
-                              pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
-                              pixcol(3) = 0
-                            else if (i_merge.eq.1) then
+                          else
+                            if (swmerge.and.swaqmpan) then
+                              if (i_merge.eq.3) then
+                                pixcol(1) = 0
+                                pixcol(2) = 0
+                                pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
+                              else if (i_merge.eq.2) then
+                                pixcol(1) = 0
+                                pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
+                                pixcol(3) = 0
+                              else if (i_merge.eq.1) then
+                                pixcol(1) = fetch_pixel(satch_valr, ndivuse, j, l)
+                                pixcol(2) = 0
+                                pixcol(3) = 0
+                              endif
+                            else
                               pixcol(1) = fetch_pixel(satch_valr, ndivuse, j, l)
-                              pixcol(2) = 0
-                              pixcol(3) = 0
+                              pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
+                              pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
+                            endif
+                          endif
+                          long_stereo = fetch_ll(satch_ll, 2, ndivuse, 1, j, l)
+                          lat_stereo  = fetch_ll(satch_ll, 2, ndivuse, 2, j, l)
+                          if (swaqmod) then
+                            if (swaqmpan) then
+                              call map_stereo_zoom_place_aqm_pan(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol,i_merge)
+                            else
+                              call map_stereo_zoom_place_aqm(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol)
                             endif
                           else
-                            pixcol(1) = fetch_pixel(satch_valr, ndivuse, j, l)
-                            pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
-                            pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
+                            call map_stereo_zoom_place(stereo_image,3,nxs,nys,long_stereo, lat_stereo, pixcol)
                           endif
-                        endif
-                        long_stereo = fetch_ll(satch_ll, 2, ndivuse, 1, j, l)
-                        lat_stereo  = fetch_ll(satch_ll, 2, ndivuse, 2, j, l)
-                        if (swaqmod) then
-                          if (swaqmpan) then
-                            call map_stereo_zoom_place_aqm_pan(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol,i_merge)
-                          else
-                            call map_stereo_zoom_place_aqm(stereo_image,stereo_count,3,nxs,nys,long_stereo, lat_stereo, pixcol)
-                          endif
-                        else
-                          call map_stereo_zoom_place(stereo_image,3,nxs,nys,long_stereo, lat_stereo, pixcol)
-                        endif
+                        enddo
                       enddo
-                    enddo
+                    endif
                   endif
                 endif
               endif
@@ -2991,7 +3086,7 @@ c--
       character*(*) file
 c
       logical   foundtle
-      integer*4 lun, iyr_tle, i, iyr_file, imn_file, ida_file
+      integer*4 lun, iyr_tle, i, iyr_file, imn_file, ida_file, diy
       real*8    doy_tle, Tmfe, linetime, ro(3), vo(3), long, lat
       real*8    theta0g, thetadum
       character*8 cdate
@@ -3032,10 +3127,14 @@ c-- Auto seek TLE - tricky stuff !
         i = index(file,'AQ_MODIS') + 9
         read (file(i:i+3),'(I4)') iyr_file
       endif
+      if (csat.eq.'TE') then
+        i = index(file,'TE_MODIS') + 9
+        read (file(i:i+3),'(I4)') iyr_file
+      endif
       write (*,'(''TLE Seek year      : '',I5)') iyr_file
       call doytodate(linedoy, iyr_file, cdate)
 c      write (*,*) linedoy, cdate
-      if (csat.ne.'AM') then
+      if (csat.ne.'AM'.and.csat.ne.'TE') then
         foundtle = .false.
         call exist(tledir(1:lnblnk(tledir))//cdate//'-weather.tle', foundtle)
         if (foundtle) then
@@ -3118,6 +3217,9 @@ c
       if (csat.eq.'AM') then
         call system('cat weather.txt | grep -A 2 -e "AQUA" - > hrpt.tmp')
       endif
+      if (csat.eq.'TE') then
+        call system('cat weather.txt | grep -A 2 -e "TERRA" - > hrpt.tmp')
+      endif
       call system('tail -n +2 hrpt.tmp > hrpt.tle')
       call system('rm hrpt.tmp')
       call get_lun(lun)
@@ -3130,11 +3232,18 @@ c
       close (unit=lun)
       call free_lun(lun)
       write (*,'(''TLE Reference date : '',I5,2x,F8.2)') iyr_tle, doy_tle
+c-- Try to fix the "end-of-year" bug
+      diy = 0
+      if (iyr_file.ne.iyr_tle) then
+        write (*,'(''End of year present: '',2I5)') iyr_tle, iyr_file
+        diy = 365
+        if (mod(iyr_tle,4).eq.0.and.iyr_tle.ne.2000) diy = diy + 1
+      endif
 c
       return
 c
       entry run_tle(linetime,linedoy, ro, vo, long, lat, theta0g)
-      Tmfe = ((linetime/86400.0D0) + dble(linedoy) - doy_tle) * 1440.0
+      Tmfe = ((linetime/86400.0D0) + dble(linedoy + diy) - doy_tle) * 1440.0D0
       call sgp4_run(Tmfe, ro, vo, long, lat, theta0g)
       return
       end
@@ -3619,15 +3728,28 @@ c
  2    continue
 c
 c-- Set up the the bow tie correction theta for MODIS if needed .... let's see if it works
-      if (swaqm1000.or.swaqm500.or.swaqm250.or.swaqmpan) then
-        thetastep = abs(aqmtheta(2) - aqmtheta(1)) / (nsat_pix - i_mid)
-        if (ystep.gt.0.0) then
-          theta  = thetascan + aqmtheta(1)
+      if (swnorth) then
+        if (swaqm1000.or.swaqm500.or.swaqm250.or.swaqmpan) then
+          thetastep = abs(aqmtheta(2) - aqmtheta(1)) / (nsat_pix - i_mid)
+          if (ystep.gt.0.0) then
+            theta  = thetascan + aqmtheta(1)
+          else
+            theta  = thetascan - aqmtheta(1)
+          endif
         else
-          theta  = thetascan - aqmtheta(1)
+          theta  = thetascan
         endif
       else
-        theta  = thetascan
+        if (swaqm1000.or.swaqm500.or.swaqm250.or.swaqmpan) then
+          thetastep = - abs(aqmtheta(2) - aqmtheta(1)) / (nsat_pix - i_mid)
+          if (ystep.gt.0.0) then
+            theta  = thetascan + aqmtheta(1)
+          else
+            theta  = thetascan - aqmtheta(1)
+          endif
+        else
+          theta  = thetascan
+        endif
       endif
 c-  Shift Y to find pixel boundaries - this should be OK as I rotate back the true satellite position to long = 0 and later rotate the solution back
 c-- Silly construct to restart at original stepsize after sign reversal
@@ -3781,10 +3903,18 @@ c                if (swswath) call darkness(longss, latss, linetime, linedoy, lo
 c-- Add the bow tie correction theta for MODIS if needed .... let's see if it works - do it here so it runs once per line !
               if (swaqm1000.or.swaqm500.or.swaqm250.or.swaqmpan) then
                 if (bowgamma.gt.0.001) then
-                  if (ystep.gt.0.0) then
-                    theta  = thetascan + aqmtheta(1) + (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                  if (swnorth) then
+                    if (ystep.gt.0.0) then
+                      theta  = thetascan + aqmtheta(1) + (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                    else
+                      theta  = thetascan - aqmtheta(1) - (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                    endif
                   else
-                    theta  = thetascan - aqmtheta(1) - (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                    if (ystep.gt.0.0) then
+                      theta  = thetascan - aqmtheta(1) - (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                    else
+                      theta  = thetascan + aqmtheta(1) + (aqmtheta(2)-aqmtheta(1)) * (dabs((dble(2*(i_mid - isgn * ind_pix))/dble(nsat_pix)) - 1.0D0) ** (1.0D0/bowgamma))
+                    endif
                   endif
                 else
                   if (ystep.gt.0.0) then
@@ -4545,15 +4675,17 @@ c
       ix = ix - ixminz + 1
       iy = iy - iyminz + 1
       if (1.le.ix.and.ix.le.nx_in.and.1.le.iy.and.iy.le.ny_in) then
-        if (stereo_count(ix,iy).eq.0) then
+        i4v2 = stereo_count(ix,iy)
+        if (i4v2.lt.0) i4v2 = i4v2 + 256
+        if (i4v2.eq.0) then
           stereo_image(1,ix,iy) = pix(1)
           stereo_image(2,ix,iy) = pix(2)
           stereo_image(3,ix,iy) = pix(3)
-        else if (stereo_count(ix,iy).eq.1) then
+        else if (i4v2.eq.1) then
           stereo_image(1,ix,iy) = (stereo_image(1,ix,iy) + pix(1)) / 2
           stereo_image(2,ix,iy) = (stereo_image(2,ix,iy) + pix(2)) / 2
           stereo_image(3,ix,iy) = (stereo_image(3,ix,iy) + pix(3)) / 2
-        else if (stereo_count(ix,iy).ge.2) then
+        else if (i4v2.ge.2.and.i4v2.lt.255) then
           i4v1 = stereo_image(1,ix,iy)
           i4v2 = stereo_count(ix,iy)
           if (i4v2.lt.0) i4v2 = i4v2 + 256
@@ -4587,9 +4719,11 @@ c          stereo_image(3,ix,iy) = (stereo_image(3,ix,iy) * stereo_count(ix,iy) 
         endif
         i4v1 = stereo_count(ix,iy)
         if (i4v1.lt.0) i4v1 = i4v1 + 256
-        i4v1 = i4v1 + 1
-        if (i4v1.gt.127) i4v1 = i4v1 - 256
-        stereo_count(  ix,iy) = i4v1
+        if (i4v1.lt.255) then
+          i4v1 = i4v1 + 1
+          if (i4v1.gt.127) i4v1 = i4v1 - 256
+          stereo_count(  ix,iy) = i4v1
+        endif
       endif
 c
       if (long.lt.longmin) longmin = long
@@ -6558,7 +6692,7 @@ c
       write (*,'(a)') '  merge         ==> A complex option to merge multiple images from different passes and different satellites. It also is required by the modispan option for Aqua MODIS truecolour processing'
       write (*,'(a)') '                ==> The first - filename - argument of the command line contains the files to be merged - or in case of panmodis, 3 (!!!! YES 3) times the same filename'
       write (*,'(a)') '                ==> In this text file after the filename you can specify non-standard theta and ilinedelay value - but if used once it needs (!!!!) to be present on all the lines'
-      write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 me and 500 m data)'
+      write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 m and 500 m data)'
       write (*,'(a)') '                ==> Example : ./hrpt.exe panmodis.txt 221 gapcor project=121 gammargb=0.92,0.98,0.92 fast histcor binary merge modispan=correct'
       write (*,'(a)') '  gammargb=x,y,z => Used to specify separate gammas for R, G and B example - gammargb=0.92,0.98,0.92 - only applied to the projected or the border image - note : it changes (slightly) the border and longlat colours'
       write (*,'(a)') ''
