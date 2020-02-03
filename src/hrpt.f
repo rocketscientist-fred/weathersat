@@ -87,7 +87,7 @@ c
       integer*4 nblank, nlines_gapcor, k3, nwrite, i_off, irp, igp, ibp, nvalid, szach, npix1, npix2, perc1, perc2, hist1(ncolmax), hist2(ncolmax)
       integer*4 irps, igps, ibps, ndiv, opchr, opchg, opchb, opperc, longstep, latstep, mv, i_bcol, i_llcol, iclim, naltavg, gammalut(ncolmax)
       real*4    wl(4), rsum, gsum, bsum, sat_avg_alt, sat_fov, lat_start, lat_end, rclim
-      real*4    dr, dg, db, dy, di, dq, sum1, sum2, szasum, wr1, wr2, wop1, wop2, altavg, rgamma, ggamma, bgamma
+      real*4    dr, dg, db, dy, di, dq, sum1, sum2, szasum, wr1, wr2, wop1, wop2, altavg, rgamma, ggamma, bgamma, rcorrect, gcorrect, bcorrect
       real*8    timestamp, timstart, timprev, ro(3), vo(3), long, lat, long_stereo, lat_stereo, ro_copy(3), lla(3), fetch_ll
       real*8    theta0g, thetascan, theta_in, szalim, w1, w2, w3, szafact, rlinedelay, theta_start, theta_end, theta_step, etascan, eta_in, aqmtheta(2), bowgamma, rpos
       logical   swnorth, swfy, swnoaa, swmetop, swgapcor, swswath, swdebug, swproject, swborder, swgamma, swtheta, swszalim, swszamer, swlinedelay, swhybrid, swfast, swthetascan, swyiq
@@ -97,7 +97,7 @@ c
       character*6   cnoaa
       character*9   cgamma
       character*10  creflong
-      character*20  ctheta, cszalim, cszafact, clinedelay, csharp, ceta, cbowgamma
+      character*20  ctheta, cszalim, cszafact, clinedelay, csharp, ceta, cbowgamma, ccorrect
       character*30  cbowtie, cgammargb
       character*250 filedata, argstring, imgname, command, filedatain, outstring, mergestring
 c
@@ -176,6 +176,9 @@ c-- Arguments from 3 onwards have no fixed order - set the initial values
       rgamma          = 1.0
       ggamma          = 1.0
       bgamma          = 1.0
+      rcorrect        = 0.0
+      gcorrect        = 0.0
+      bcorrect        = 0.0
       bowgamma        = 0.0
       swbowgamma      = .false.
       swterra         = .false.
@@ -487,6 +490,21 @@ c-- End of reading merge file
           i = index(cbowgamma,'=')
           call string_to_r8(cbowgamma(i+1:lnblnk(cbowgamma))//' ',npos, bowgamma)
           write (*,'(''BowTie Gamma       : '',F10.4)') bowgamma
+        endif
+        if (index (argstring,'rcorrect=').ne.0) then
+          ccorrect  = argstring(1:lnblnk(argstring))
+          i = index(ccorrect,'=')
+          call string_to_r4(ccorrect(i+1:lnblnk(ccorrect))//' ',npos, rcorrect)
+        endif
+        if (index (argstring,'gcorrect=').ne.0) then
+          ccorrect  = argstring(1:lnblnk(argstring))
+          i = index(ccorrect,'=')
+          call string_to_r4(ccorrect(i+1:lnblnk(ccorrect))//' ',npos, gcorrect)
+        endif
+        if (index (argstring,'bcorrect=').ne.0) then
+          ccorrect  = argstring(1:lnblnk(argstring))
+          i = index(ccorrect,'=')
+          call string_to_r4(ccorrect(i+1:lnblnk(ccorrect))//' ',npos, bcorrect)
         endif
       enddo
       if ((swborder.or.swlonglat).and.swsharp) write (*,'(''W A R N I N G : border/longlat and sharpen together may give different colour values for these !!'')')
@@ -2209,7 +2227,7 @@ c-- If required, draw the longlat grid after the borders
           endif
 c-- If requested, carry out the gamma correction for separate RGB's
           if (swgammargb) then
-            call gamma_correct(stereo_image, 3, nxs, nys, rgamma, ggamma, bgamma, gammalut, ncolmax, iclim)
+            call gamma_correct(stereo_image, 3, nxs, nys, rgamma, ggamma, bgamma, gammalut, ncolmax, iclim, rcorrect, gcorrect, bcorrect)
           endif
 c-- Write out rhe projected rgb file (with or without border !)
           do i = 1, nys
@@ -2268,7 +2286,7 @@ c-- Draw the longlat grid
           open (unit=lunborder,file=imgname(1:lnblnk(imgname)),form='unformatted', access='direct',recl=3*nxs*2)
 c-- If requested, carry out the gamma correction for separate RGB's
           if (swgammargb) then
-            call gamma_correct(stereo_image, 3, nxs, nys, rgamma, ggamma, bgamma, gammalut, ncolmax, iclim)
+            call gamma_correct(stereo_image, 3, nxs, nys, rgamma, ggamma, bgamma, gammalut, ncolmax, iclim, rcorrect, gcorrect, bcorrect)
           endif
 c-- Write out rhe projected rgb file (with or without border !)
           do i = 1, nys
@@ -5124,49 +5142,97 @@ c
       return
       end
 
-      subroutine gamma_correct(stereo_image, nrgb, nxs, nys, rgamma, ggamma, bgamma, gammalut, ncol, iclim)
+      subroutine gamma_correct(stereo_image, nrgb, nxs, nys, rgamma_in, ggamma_in, bgamma_in, gammalut, ncol, iclim, rcorrect, gcorrect, bcorrect)
       implicit none
 c
-      real*4    rgamma, ggamma, bgamma
+      real*4    rgamma_in, ggamma_in, bgamma_in, rcorrect, gcorrect, bcorrect
       integer*4 nrgb, nxs, nys, ncol, iclim
       integer*4 gammalut(ncol)
       integer*2 stereo_image(nrgb, nxs, nys)
 c
-      real*4 r, c
-      integer*4 i, j
+      real*4 r, c, rpos, rgamma, ggamma, bgamma
+      integer*4 i, j, k
+      rgamma = rgamma_in
+      ggamma = ggamma_in
+      bgamma = bgamma_in
 c-- R
-      do i = 1, iclim + 1
-        r = float(i-1) / float(iclim)
-        c = r ** (1.0/rgamma)
-        gammalut(i) = nint(c*float(iclim))
-      enddo
-      do j = 1, nys
+      if (abs(rcorrect).gt.0.0001) then
         do i = 1, nxs
-          if (0.lt.stereo_image(1,i,j).and.stereo_image(1,i,j).le.iclim) stereo_image(1,i,j) = gammalut(stereo_image(1,i,j) + 1)
+          rpos = abs((float(2*i)/float(nxs)) - 1.0)
+          rgamma = rgamma_in + rpos * rcorrect
+          do k = 1, iclim + 1
+            r = float(k-1) / float(iclim)
+            c = r ** (1.0/rgamma)
+            gammalut(k) = nint(c*float(iclim))
+          enddo
+          do j = 1, nys
+            if (0.lt.stereo_image(1,i,j).and.stereo_image(1,i,j).le.iclim) stereo_image(1,i,j) = gammalut(stereo_image(1,i,j) + 1)
+          enddo
         enddo
-      enddo
+      else
+        do i = 1, iclim + 1
+          r = float(i-1) / float(iclim)
+          c = r ** (1.0/rgamma)
+          gammalut(i) = nint(c*float(iclim))
+        enddo
+        do j = 1, nys
+          do i = 1, nxs
+            if (0.lt.stereo_image(1,i,j).and.stereo_image(1,i,j).le.iclim) stereo_image(1,i,j) = gammalut(stereo_image(1,i,j) + 1)
+          enddo
+        enddo
+      endif
 c-- G
-      do i = 1, iclim + 1
-        r = float(i-1) / float(iclim)
-        c = r ** (1.0/ggamma)
-        gammalut(i) = nint(c*float(iclim))
-      enddo
-      do j = 1, nys
+      if (abs(gcorrect).gt.0.0001) then
         do i = 1, nxs
-          if (0.lt.stereo_image(2,i,j).and.stereo_image(2,i,j).le.iclim) stereo_image(2,i,j) = gammalut(stereo_image(2,i,j) + 1)
+          rpos = abs((float(2*i)/float(nxs)) - 1.0)
+          ggamma = ggamma_in + rpos * gcorrect
+          do k = 1, iclim + 1
+            r = float(k-1) / float(iclim)
+            c = r ** (1.0/ggamma)
+            gammalut(k) = nint(c*float(iclim))
+          enddo
+          do j = 1, nys
+            if (0.lt.stereo_image(2,i,j).and.stereo_image(2,i,j).le.iclim) stereo_image(2,i,j) = gammalut(stereo_image(2,i,j) + 1)
+          enddo
         enddo
-      enddo
+      else
+        do i = 1, iclim + 1
+          r = float(i-1) / float(iclim)
+          c = r ** (1.0/ggamma)
+          gammalut(i) = nint(c*float(iclim))
+        enddo
+        do j = 1, nys
+          do i = 1, nxs
+            if (0.lt.stereo_image(2,i,j).and.stereo_image(2,i,j).le.iclim) stereo_image(2,i,j) = gammalut(stereo_image(2,i,j) + 1)
+          enddo
+        enddo
+      endif
 c-- B
-      do i = 1, iclim + 1
-        r = float(i-1) / float(iclim)
-        c = r ** (1.0/bgamma)
-        gammalut(i) = nint(c*float(iclim))
-      enddo
-      do j = 1, nys
+      if (abs(bcorrect).gt.0.0001) then
         do i = 1, nxs
-          if (0.lt.stereo_image(3,i,j).and.stereo_image(3,i,j).le.iclim) stereo_image(3,i,j) = gammalut(stereo_image(3,i,j) + 1)
+          rpos = abs((float(2*i)/float(nxs)) - 1.0)
+          bgamma = bgamma_in + rpos * bcorrect
+          do k = 1, iclim + 1
+            r = float(k-1) / float(iclim)
+            c = r ** (1.0/bgamma)
+            gammalut(k) = nint(c*float(iclim))
+          enddo
+          do j = 1, nys
+            if (0.lt.stereo_image(3,i,j).and.stereo_image(3,i,j).le.iclim) stereo_image(3,i,j) = gammalut(stereo_image(3,i,j) + 1)
+          enddo
         enddo
-      enddo
+      else
+        do i = 1, iclim + 1
+          r = float(i-1) / float(iclim)
+          c = r ** (1.0/bgamma)
+          gammalut(i) = nint(c*float(iclim))
+        enddo
+        do j = 1, nys
+          do i = 1, nxs
+            if (0.lt.stereo_image(3,i,j).and.stereo_image(3,i,j).le.iclim) stereo_image(3,i,j) = gammalut(stereo_image(3,i,j) + 1)
+          enddo
+        enddo
+      endif
 c
       return
       end
@@ -6695,6 +6761,12 @@ c
       write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 m and 500 m data)'
       write (*,'(a)') '                ==> Example : ./hrpt.exe panmodis.txt 221 gapcor project=121 gammargb=0.92,0.98,0.92 fast histcor binary merge modispan=correct'
       write (*,'(a)') '  gammargb=x,y,z => Used to specify separate gammas for R, G and B example - gammargb=0.92,0.98,0.92 - only applied to the projected or the border image - note : it changes (slightly) the border and longlat colours'
+      write (*,'(a)') '  rcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 rcorrect=-0.2 will apply a gamma of 0.9 at the center '
+      write (*,'(a)') '                    of the scanline and a value of 0.7 at the left and right edges. A value for rcorrect should not generally be needed.'
+      write (*,'(a)') '  gcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 gcorrect=-0.2 will apply a gamma of 1.0 at the center '
+      write (*,'(a)') '                    of the scanline and a value of 0.8 at the left and right edges. gcorrect=-0.15 appears to be good for MODIS (with the bcorrect=-0.25 as well)'
+      write (*,'(a)') '  bcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 bcorrect=-0.2 will apply a gamma of 1.1 at the center '
+      write (*,'(a)') '                    of the scanline and a value of 0.9 at the left and right edges. bcorrect=-0.25 appears to be good for MODIS (with the gcorrect=-0.15 as well)'
       write (*,'(a)') ''
       write (*,'(a)') 'Inherited by other s/w'
       write (*,'(a)') '  bowtie=x.y,x.y ==> Passed on to readbin_modis.exe as part of the command string to set the bowtie correction parameters - default : bowtie=0.18,0.42 defined inside readbin_bowtie.f'
