@@ -1,5 +1,5 @@
       implicit none
-      logical swpng, swdebug, swcorrect, swnight
+      logical swpng, swdebug, swcorrect, swnight, swfitlin, swterra
       integer*1 inbuf(642), timbuf(28), timbuf_zero(28), inbuf_night(276)
 c-- The image buffers - cater also for 13H and 14H
       integer*2 buffer_250m(216640,2), buffer_500m(54160,5), buffer_1km(13540,31), buffer_zero_250m(216640,2), buffer_zero_500m(54160,5), buffer_zero_1km(13540,31)
@@ -27,6 +27,8 @@ c
       swdebug   = .false.
       swcorrect = .false.
       swnight   = .false.
+      swfitlin  = .false.
+      swterra   = .false.
       do i_arg = 2,10
         call getarg(i_arg,argstring)
         if (index(argstring,'nopng').ne.0)   swpng     = .false.
@@ -45,8 +47,10 @@ c
             write (*,'(''BowTie pk-pk2 override     : '',F10.4)') theta_pk_pk2
           endif
         endif
+        if (index(argstring,'fitlin').ne.0) swfitlin = .true.
       enddo
       call getarg(1,argstring)
+      if (index(argstring,'TE_').ne.0) swterra = .true.
       if (.not.swnight) then
         open (unit=lun,file=argstring(1:lnblnk(argstring)), access='direct',form='unformatted',recl=642)
       else
@@ -251,7 +255,7 @@ c-- Before we flush try to capture the wrong times that slip through - this coul
                   if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 3
 c-- Write band01 and band02
                   do ib = 1,2
-                    call modis_hist(buffer_250m(1,ib), 216640, ib)
+                    call modis_hist(buffer_250m(1,ib), 216640, ib, swterra)
                   enddo
                   do j = 1,2
                     do i = 1, 216640
@@ -260,7 +264,7 @@ c-- Write band01 and band02
                   enddo
 c-- Write band03 through band07
                   do ib = 3,7
-                    call modis_hist(buffer_500m(1,ib-2), 54160, ib)
+                    call modis_hist(buffer_500m(1,ib-2), 54160, ib, swterra)
                   enddo
                   do j = 1,5
                     do i = 1, 54160
@@ -269,7 +273,7 @@ c-- Write band03 through band07
                   enddo
 c-- Write band08 through band38
                   do ib = 8,38
-                    call modis_hist(buffer_1km(1,ib-7), 13540, ib)
+                    call modis_hist(buffer_1km(1,ib-7), 13540, ib, swterra)
                   enddo
                   do j = 1,31
                     do i = 1, 13540
@@ -325,7 +329,7 @@ c-- Write band08 through band38
 c-- Deal with the pending buffers
 c-- Write band01 and band02
           do ib = 1,2
-            call modis_hist(buffer_250m(1,ib), 216640, ib)
+            call modis_hist(buffer_250m(1,ib), 216640, ib, swterra)
           enddo
           do j = 1,2
             do i = 1, 216640
@@ -334,7 +338,7 @@ c-- Write band01 and band02
           enddo
 c-- Write band03 through band07
           do ib = 3,7
-            call modis_hist(buffer_500m(1,ib-2), 54160, ib)
+            call modis_hist(buffer_500m(1,ib-2), 54160, ib, swterra)
           enddo
           do j = 1,5
             do i = 1, 54160
@@ -343,7 +347,7 @@ c-- Write band03 through band07
           enddo
 c-- Write band08 through band38
           do ib = 8,38
-            call modis_hist(buffer_1km(1,ib-7), 13540, ib)
+            call modis_hist(buffer_1km(1,ib-7), 13540, ib, swterra)
           enddo
           do j = 1,31
             do i = 1, 13540
@@ -381,7 +385,7 @@ c-- Before we flush try to capture the wrong times that slip through - this coul
                   if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 5
 c-- Write band20 through band36
                   do ib = 20,36
-                    call modis_hist(buffer_1km(1,ib-7), 13540, ib)
+                    call modis_hist(buffer_1km(1,ib-7), 13540, ib, swterra)
                   enddo
                   do j = 1,31
                     do i = 1, 13540
@@ -416,7 +420,7 @@ c-- Write band20 through band36
 c-- Deal with the pending buffers
 c-- Write band20 through band36
           do ib = 20,36
-            call modis_hist(buffer_1km(1,ib-7), 13540, ib)
+            call modis_hist(buffer_1km(1,ib-7), 13540, ib, swterra)
           enddo
           do j = 1,31
             do i = 1, 13540
@@ -424,7 +428,7 @@ c-- Write band20 through band36
             enddo
           enddo
         endif
-        call modis_hist_flush(swnight)
+        call modis_hist_flush(swnight, swfitlin)
       endif
 c--  End of correction preparation
       irec = 1
@@ -527,7 +531,7 @@ c-- Write band08 through band38
 c-- End flushing empty buffers, now flush the real one
 c-- Write band01 and band02
                 do ib = 1,2
-                  if (swcorrect) call modis_hist_correct(buffer_250m(1,ib), 216640, ib)
+                  if (swcorrect) call modis_hist_correct(buffer_250m(1,ib), 216640, ib, swfitlin)
                   timestamp_zero = timestamp
                   do k = nlines(ib) + 1, nlines(ib) + 40
                     theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 / 39.0D0)
@@ -553,7 +557,7 @@ c-- Write band01 and band02
                 enddo
 c-- Write band03 through band07
                 do ib = 3,7
-                  if (swcorrect) call modis_hist_correct(buffer_500m(1,ib-2), 54160, ib)
+                  if (swcorrect) call modis_hist_correct(buffer_500m(1,ib-2), 54160, ib, swfitlin)
                   timestamp_zero = timestamp
                   do k = nlines(ib) + 1, nlines(ib) + 20
                     theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 / 19.0D0)
@@ -579,7 +583,7 @@ c-- Write band03 through band07
                 enddo
 c-- Write band08 through band38
                 do ib = 8,38
-                  if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib)
+                  if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib, swfitlin)
                   timestamp_zero = timestamp
                   do k = nlines(ib) + 1, nlines(ib) + 10
                     theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 /  9.0D0)
@@ -653,7 +657,7 @@ c-- Write band08 through band38
 c-- Write the pending buffer
 c-- Write band01 and band02
         do ib = 1,2
-          if (swcorrect) call modis_hist_correct(buffer_250m(1,ib), 216640, ib)
+          if (swcorrect) call modis_hist_correct(buffer_250m(1,ib), 216640, ib, swfitlin)
           timestamp_zero = timestamp
           do k = nlines(ib) + 1, nlines(ib) + 40
             theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 / 39.0D0)
@@ -674,7 +678,7 @@ c-- Write band01 and band02
         enddo
 c-- Write band03 through band07
         do ib = 3,7
-          if (swcorrect) call modis_hist_correct(buffer_500m(1,ib-2), 54160, ib)
+          if (swcorrect) call modis_hist_correct(buffer_500m(1,ib-2), 54160, ib, swfitlin)
           timestamp_zero = timestamp
           do k = nlines(ib) + 1, nlines(ib) + 20
             theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 / 19.0D0)
@@ -695,7 +699,7 @@ c-- Write band03 through band07
         enddo
 c-- Write band08 through band38
         do ib = 8,38
-          if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib)
+          if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib, swfitlin)
           timestamp_zero = timestamp
           do k = nlines(ib) + 1, nlines(ib) + 10
             theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 /  9.0D0)
@@ -809,7 +813,7 @@ c-- Write band20 through band36
 c-- End flushing empty buffers, now flush the real one
 c-- Write band20 through band36
                 do ib = 20,36
-                  if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib)
+                  if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib, swfitlin)
                   timestamp_zero = timestamp
                   do k = nlines(ib) + 1, nlines(ib) + 10
                     theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 /  9.0D0)
@@ -862,7 +866,7 @@ c-- Write band20 through band36
 c-- Write the pending buffer
 c-- Write band20 through band36
         do ib = 20, 36
-          if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib)
+          if (swcorrect) call modis_hist_correct(buffer_1km(1,ib-7), 13540, ib, swfitlin)
           timestamp_zero = timestamp
           do k = nlines(ib) + 1, nlines(ib) + 10
             theta1 = (theta_pk_pk1/2.0D0) - dble(k - nlines(ib) - 1) * (theta_pk_pk1 /  9.0D0)
@@ -1252,41 +1256,67 @@ c
       implicit none
       integer*4 nbuf, band, ifov, idet
       integer*2 buffer(nbuf)
+      logical swfitlin, swterra
 c
-      real*4    sum, histmin, histmax
-      integer*4 nhist_250m(40, 2), nhist_500m(20, 5), nhist_1km(10, 31)
-      real*4     hist_250m(40, 2),  hist_500m(20, 5),  hist_1km(10, 31)
-      integer*4 i, j, k, l
+      real*4    sum, histmin, histmax, dmaxmin, dhist
+c-- The initial index 4 is to try and fix the apparent 4 pixel patter in Aqua and Terra band 1/2 images
+      integer*4 nhist_250m(4, 40, 2), nhist_500m(2, 20, 5), nhist_1km(10, 31)
+      real*4     hist_250m(4, 40, 2),  hist_500m(2, 20, 5),  hist_1km(10, 31)
+      integer*4 i, j, k, l, lp
       logical   swnight
+c-- See if this is permanently needed
+      integer*4 hist_250m_full(4096, 40, 2),  hist_500m_full(4096, 20, 5),  hist_1km_full(4096, 10, 31), ih, ipix
+      character*100 filenm, outstring, filinf
 c
       save
 c
+      call getenv('HRPTOUT',outstring)
       do i = 1,2
         do j = 1,40
-           hist_250m(j,i) = 0.
-          nhist_250m(j,i) = 0
+          do k = 1, 4
+             hist_250m(k,j,i) = 0.
+            nhist_250m(k,j,i) = 0
+          enddo
+          do k = 1, 4096
+            hist_250m_full(k,j,i) = 0
+          enddo
         enddo
       enddo
       do i = 1,5
         do j = 1,20
-           hist_500m(j,i) = 0.
-          nhist_500m(j,i) = 0
+          do k = 1, 2
+             hist_500m(k,j,i) = 0.
+            nhist_500m(k,j,i) = 0
+          enddo
+          do k = 1, 4096
+            hist_500m_full(k,j,i) = 0
+          enddo
         enddo
       enddo
       do i = 1,31
         do j = 1,10
            hist_1km(j,i) = 0.
           nhist_1km(j,i) = 0
+          do k = 1, 4096
+            hist_1km_full(k,j,i) = 0
+          enddo
         enddo
       enddo
 c
       return
 c
-      entry modis_hist(buffer, nbuf, band)
+      entry modis_hist(buffer, nbuf, band, swterra)
 c
       if (band.eq.1.or.band.eq.2) then
 c-- First determine if the vertical strip has the right "amplitude" to use ....... and then determine its sum to get a mean
+        dmaxmin = 175.0
+        dhist   = 500.0
+        if (swterra) then
+          dmaxmin = 100.0
+          dhist   = 300.0
+        endif
         do l = 1,5416
+          lp = mod(l,4) + 1
           histmin = 4096.
           histmax = -1.
           sum     = 0.
@@ -1296,18 +1326,31 @@ c-- First determine if the vertical strip has the right "amplitude" to use .....
             if (min(max(buffer(k),0),4095).lt.histmin) histmin = min(max(buffer(k),0),4095)
             sum = sum + min(max(buffer(k),0),4095)
           enddo
-          if (histmax-histmin.lt.175.0.and.histmin.le.500.0) then 
+          if (histmax-histmin.lt.dmaxmin.and.histmin.le.dhist) then 
             do k = l, 39*5416 + l, 5416
               i = ((k-1)/5416) + 1
-               hist_250m(i,band) =  hist_250m(i,band) + float(min(max(buffer(k),0),4095)) - (sum/40.0)
-              nhist_250m(i,band) = nhist_250m(i,band) + 1
+               hist_250m(lp,i,band) =  hist_250m(lp,i,band) + float(min(max(buffer(k),0),4095)) - (sum/40.0)
+              nhist_250m(lp,i,band) = nhist_250m(lp,i,band) + 1
             enddo
           endif
+          do k = l, 39*5416 + l, 5416
+            i  = ((k-1)/5416) + 1
+            ih = min(max(buffer(k),0),4095) + 1
+            hist_250m_full(ih, i, band) = hist_250m_full(ih, i, band) + 1 
+          enddo
         enddo
       endif
       if (3.le.band.and.band.le.7) then
 c-- First determine if the vertical strip has the right "amplitude" to use ....... and then determine its sum to get a mean
+        dmaxmin = 100.0
+        dhist   = 500.0
+        if (swterra) then
+          dmaxmin = 100.0
+          if (band.eq.3) dmaxmin = 150.0
+          dhist   = 300.0
+        endif
         do l = 1,2708
+          lp = mod(l,2) + 1
           histmin = 4096.
           histmax = -1.
           sum     = 0.
@@ -1317,13 +1360,18 @@ c-- First determine if the vertical strip has the right "amplitude" to use .....
             if (min(max(buffer(k),0),4095).lt.histmin) histmin = min(max(buffer(k),0),4095)
             sum = sum + min(max(buffer(k),0),4095)
           enddo
-          if (histmax-histmin.lt.100.0) then 
+          if (histmax-histmin.lt.dmaxmin.and.histmin.le.dhist) then 
             do k = l, 19*2708 + l, 2708
               i = ((k-1)/2708) + 1
-               hist_500m(i,band-2) =  hist_500m(i,band-2) + float(min(max(buffer(k),0),4095)) - (sum/20.0)
-              nhist_500m(i,band-2) = nhist_500m(i,band-2) + 1
+               hist_500m(lp,i,band-2) =  hist_500m(lp,i,band-2) + float(min(max(buffer(k),0),4095)) - (sum/20.0)
+              nhist_500m(lp,i,band-2) = nhist_500m(lp,i,band-2) + 1
             enddo
           endif
+          do k = l, 19*2708 + l, 2708
+            i  = ((k-1)/2708) + 1
+            ih = min(max(buffer(k),0),4095) + 1
+            hist_500m_full(ih, i, band-2) = hist_500m_full(ih, i, band-2) + 1 
+          enddo
         enddo
       endif
       if (8.le.band.and.band.le.38) then
@@ -1345,63 +1393,130 @@ c-- First determine if the vertical strip has the right "amplitude" to use .....
               nhist_1km(i,band-7) = nhist_1km(i,band-7) + 1
             enddo
           endif
-        enddo
-      endif
-      return
-c
-      entry modis_hist_correct(buffer, nbuf, band)
-c
-      if (band.eq.1.or.band.eq.2) then
-        do i = 1, 10
-          do j = 1,4
-            do k = ((i-1) * 4 + j - 1) * 5416 + 1, ((i-1) * 4 + j - 1) * 5416 + 5416
-              buffer(k) = buffer(k) - nint(hist_250m((i-1)*4+j,band))
-            enddo
-          enddo
-        enddo
-      endif
-      if (3.le.band.and.band.le.7) then
-        do i = 1, 10
-          do j = 1,2
-            do k = ((i-1) * 2 + j - 1) * 2708 + 1, ((i-1) * 2 + j - 1) * 2708 + 2708
-              buffer(k) = buffer(k) - nint(hist_500m((i-1)*2+j,band-2))
-            enddo
-          enddo
-        enddo
-      endif
-      if (8.le.band.and.band.le.38) then
-        do i = 1, 10
-          do j = 1,1
-            do k = ((i-1) * 1 + j - 1) * 1354 + 1, ((i-1) * 1 + j - 1) * 1354 + 1354
-              buffer(k) = buffer(k) - nint(hist_1km((i-1)*1+j,band-7))
-            enddo
+          do k = l, 9*1354 + l, 1354
+            i  = ((k-1)/1354) + 1
+            ih = min(max(buffer(k),0),4095) + 1
+            hist_1km_full(ih, i, band-7) = hist_1km_full(ih, i, band-7) + 1 
           enddo
         enddo
       endif
       return
 c
-      entry modis_hist_flush(swnight)
+      entry modis_hist_correct(buffer, nbuf, band, swfitlin)
+c
+      if (swfitlin) then
+        if (band.eq.1.or.band.eq.2) then
+          do i = 1, 10
+            do j = 1,4
+              do k = ((i-1) * 4 + j - 1) * 5416 + 1, ((i-1) * 4 + j - 1) * 5416 + 5416
+                lp = mod(k,4) + 1
+                buffer(k) = buffer(k) - nint(hist_250m(lp,(i-1)*4+j,band))
+              enddo
+            enddo
+          enddo
+        endif
+        if (3.le.band.and.band.le.7) then
+          do i = 1, 10
+            do j = 1,2
+              do k = ((i-1) * 2 + j - 1) * 2708 + 1, ((i-1) * 2 + j - 1) * 2708 + 2708
+                lp = mod(k,2) + 1
+                buffer(k) = buffer(k) - nint(hist_500m(lp,(i-1)*2+j,band-2))
+              enddo
+            enddo
+          enddo
+        endif
+        if (8.le.band.and.band.le.38) then
+          do i = 1, 10
+            do j = 1,1
+              do k = ((i-1) * 1 + j - 1) * 1354 + 1, ((i-1) * 1 + j - 1) * 1354 + 1354
+                buffer(k) = buffer(k) - nint(hist_1km((i-1)*1+j,band-7))
+              enddo
+            enddo
+          enddo
+        endif
+      else
+        if (band.eq.1.or.band.eq.2) then
+          do i = 1, 10
+            do j = 1,4
+              do k = ((i-1) * 4 + j - 1) * 5416 + 1, ((i-1) * 4 + j - 1) * 5416 + 5416
+                lp = mod(k,4) + 1
+                buffer(k) = buffer(k) - nint(hist_250m(lp,(i-1)*4+j,band))
+              enddo
+            enddo
+          enddo
+        endif
+        if (3.le.band.and.band.le.7) then
+          do i = 1, 10
+            do j = 1,2
+              do k = ((i-1) * 2 + j - 1) * 2708 + 1, ((i-1) * 2 + j - 1) * 2708 + 2708
+                lp = mod(k,2) + 1
+                buffer(k) = buffer(k) - nint(hist_500m(lp,(i-1)*2+j,band-2))
+              enddo
+            enddo
+          enddo
+        endif
+        if (8.le.band.and.band.le.38) then
+          do i = 1, 10
+            do j = 1,1
+              do k = ((i-1) * 1 + j - 1) * 1354 + 1, ((i-1) * 1 + j - 1) * 1354 + 1354
+                buffer(k) = buffer(k) - nint(hist_1km((i-1)*1+j,band-7))
+              enddo
+            enddo
+          enddo
+        endif
+      endif
+      return
+c
+      entry modis_hist_flush(swnight, swfitlin)
 c
       if (.not.swnight) then
         do i = 1,2
           do j = 1,40
-            if (nhist_250m(j,i).gt.0) then 
-              hist_250m(j,i) = hist_250m(j,i) / float(nhist_250m(j,i))
+            do k = 1, 4
+              if (nhist_250m(k,j,i).gt.0) then 
+                hist_250m(k,j,i) = hist_250m(k,j,i) / float(nhist_250m(k,j,i))
 c              write (*,*) i, j, hist_250m(j,i), nhist_250m(j,i)
+              endif
+            enddo
+c            write (*,'(2I10,4(F10.3,1x))') i, j, (hist_250m(k,j,i),k=1,4)
+c-- For the time being only plot the spectra here
+            if (swfitlin) then
+              if (j.ge.2) then
+                write (filinf,'(a,''250m_b'',I2.2,''l''I2.2)') outstring(1:lnblnk(outstring)), i, j
+                write (filenm,'(a,''250m_band_'',I2.2,''_line_''I2.2)') outstring(1:lnblnk(outstring)), i, j
+                call hist_plot(hist_250m_full(1,j,i), hist_250m_full(1,1,i), 4096, 1, 4096, 1, filenm, ' ', filinf)
+                call system('gmt psconvert '//filenm(1:lnblnk(filenm))//'.ps -A0.2c+s5c -Tg')
+                call system('convert '//filenm(1:lnblnk(filenm))//'.png -rotate 90 '//filenm(1:lnblnk(filenm))//'.png')
+              endif
             endif
+c
           enddo
+          if (swfitlin) call system('rm '//outstring(1:lnblnk(outstring))//'*.ps')
         enddo
         do i = 1,5
           do j = 1,20
-            if (nhist_500m(j,i).gt.0) then 
-              hist_500m(j,i) = hist_500m(j,i) / float(nhist_500m(j,i))
-c              write (*,*) i, j, hist_500m(j,i), nhist_500m(j,i)
+            do k = 1, 2
+              if (nhist_500m(k,j,i).gt.0) then 
+                hist_500m(k,j,i) = hist_500m(k,j,i) / float(nhist_500m(k,j,i))
+              endif
+            enddo
+c
+            if (swfitlin) then
+              if (j.ge.2) then
+                write (filinf,'(a,''500m_b'',I2.2,''l''I2.2)') outstring(1:lnblnk(outstring)), i, j
+                write (filenm,'(a,''500m_band_'',I2.2,''_line_''I2.2)') outstring(1:lnblnk(outstring)), i, j
+                call hist_plot(hist_500m_full(1,j,i), hist_500m_full(1,1,i), 4096, 1, 4096, 1, filenm, ' ', filinf)
+                call system('gmt psconvert '//filenm(1:lnblnk(filenm))//'.ps -A0.2c+s5c -Tg')
+                call system('convert '//filenm(1:lnblnk(filenm))//'.png -rotate 90 '//filenm(1:lnblnk(filenm))//'.png')
+              endif
             endif
+c
           enddo
+          if (swfitlin) call system('rm '//outstring(1:lnblnk(outstring))//'*.ps')
         enddo
         do i = 1,31
           do j = 1,10
-            if (nhist_1km(j,i).gt.0) then 
+            if (nhist_1km(j,i).gt.0.and.(.not.swfitlin)) then 
               hist_1km(j,i) = hist_1km(j,i) / float(nhist_1km(j,i))
 c              write (*,*) i, j, hist_1km(j,i), nhist_1km(j,i)
             endif
@@ -1572,5 +1687,55 @@ c
         endif
       endif
       read (string(i1:i2),cfmt) value
+      return
+      end
+
+      subroutine hist_plot(hist,hist_ref, nx,ny,nxin,nyin,filenm,ctxt, filinf)
+      implicit none
+      integer*4 nx, ny, hist(nx, ny), nxin, nyin, hist_ref(nx, ny)
+      character*(*) filenm, ctxt, filinf
+c
+      integer*4 lunplot, i, j
+      real*4 xr(2), yr(2), rhisty(4096), rhistx(4096)
+      call get_lun(lunplot)
+      call PS_init_colourtable(1,'./resource/color')
+      call set_PS_fullpage()
+      call pkg_openpl(filenm(1:lnblnk(filenm))//'.ps', lunplot)
+      call newpen(6)
+      xr(1) = 0.
+      xr(2) = float(nxin)
+      yr(1) = hist(1,1)
+      yr(2) = yr(1)
+      do i = 1,nxin
+        do j = 1,nyin
+          if (hist(i,j).lt.yr(1)) yr(1) = hist(i,j)
+          if (hist(i,j).gt.yr(2)) yr(2) = hist(i,j)
+        enddo
+      enddo
+c-- Fix the vertical scaling
+      yr(2) = 99999.0
+      j = len(filenm)
+      do while (filenm(j:j).ne.'/')
+        j = j - 1
+      enddo
+      call pkg_frame(11,-6,1.,xr,yr,'Bin #','Frequency',filinf(j+1:lnblnk(filinf)))
+      do j = 1,nyin
+        do i = 1,nxin
+          rhisty(i) = float(hist(i,j))
+          rhistx(i) = float(i)
+        enddo
+        call newpen(7-j)
+        call pkg_plhist(rhistx,rhisty,nxin)
+        do i = 1,nxin
+          rhisty(i) = float(hist_ref(i,j))
+          rhistx(i) = float(i)
+        enddo
+        call newpen(6-j)
+        call pkg_plhist(rhistx,rhisty,nxin)
+      enddo
+      call newpen(6)
+      call pkg_pltextbl(ctxt(1:lnblnk(ctxt)),1)
+      call pkg_clospl()
+      call free_lun(lunplot)
       return
       end
