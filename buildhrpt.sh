@@ -23,8 +23,8 @@ then
 fi
 echo "gfortran -o readbin.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin.f"
 gfortran -o readbin.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin.f
-echo "gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin_modis.f"
-gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin_modis.f
+echo "gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin_modis.f plotsoft.o"
+gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin_modis.f plotsoft.o
 echo "gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/polarstereo.f"
 gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/polarstereo.f
 rm *.o
