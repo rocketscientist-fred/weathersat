@@ -39,7 +39,7 @@ Use ./hrpt.exe --help for command line explanation - this is essential to do !
 
 To start:
 
-Extract this GITHUB repository in full to a directory named HRPT.
+Extract this GITHUB repository in full.
 
 Then get the Google drive file:
 
@@ -64,19 +64,25 @@ export MMODEL=LARGE
 export LAT=52.338989
 export LONG=4.709772
 
-set the MMODEL to MEDIUM if AQUA Modis processing is not required.
+set the MMODEL to MEDIUM if AQUA/Terra Modis processing is not required.
 adapt LONG and LAT to your position - the setting above puts you smack on top of a Schiphol runway
 for LONG - positive values are Eastern longitude
 
-As the software is TLE based it needs a TLE file. I download these daily from 
+For MODIS data hrpt.exe internally launches readbin_modis.exe with some parameters. You can also launch 
+readbin_modis.exe yourself for some quick per channel (and a 221=RGB composite aspect corrected 
+image) by:
+
+./readbin_modis.exe filename correct
+
+As the hrpt.exe software is TLE based it needs a TLE file. I download these daily from 
 the web site with a crontab script (you need to modify the local directories in here !) :
 
 #!/bin/bash
 mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-weather.tle
-wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/weather.txt
+wget http://www.celestrak.com/NORAD/elements/weather.txt
 mv weather.txt $mytlefile
 mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-resource.tle
-wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/resource.txt
+wget http://www.celestrak.com/NORAD/elements/resource.txt
 mv resource.txt $mytlefile
 
 this creates a file like:
@@ -87,17 +93,17 @@ and
 
 20190306-resource.tle
 
-my s/w uses the data from the HRPT filename to find the equivalent date TLE 
+my s/w uses the data from the filename to find the equivalent date TLE 
 file (and also tries 1 day earlier and later) in that directory.
 
 If you have set the TLE environment variable, this script could look like:
 
 #!/bin/bash
 mytlefile=$TLE`(date +%Y%m%d)`-weather.tle
-wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/weather.txt
+wget http://www.celestrak.com/NORAD/elements/weather.txt
 mv weather.txt $mytlefile
 mytlefile=$TLE`(date +%Y%m%d)`-resource.tle
-wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/resource.txt
+wget http://www.celestrak.com/NORAD/elements/resource.txt
 mv resource.txt $mytlefile
 
 
@@ -216,7 +222,8 @@ won't allow. Limitation is that it only mounts NTFS HD's and USB devices, NOT a 
 
 It also runs fine on UBUNTU as an ORACLE Virtualbox VM, but slower.
 
-Install:
+Install of WSL1 (if you already have WSL1 but want to migrate to WSL2 (much faster) see below) :
+
 - In windows 10 search for "feature"  or "turn windows features" and start "turn windows features on or off"
 - Scroll to Windows Subsystem for Linux and enable it, then OK etc etc
 - Go to : https://www.microsoft.com/nl-nl/p/ubuntu-1804-lts/9n9tngvndl3q?rtc=1&activetab=pivot:overviewtab
@@ -235,6 +242,21 @@ Install:
 - chmod 744 buildhrpt.sh
 - ./buildhrpt.sh
 - ./hrpt.exe --help
+
+Install of WSL2:
+- Follow the logic/instructions at: https://docs.microsoft.com/en-us/windows/wsl/install-win10
+
+NOTE : With the introduction of WSL2 I found that the system NO LONGER is compatible with Virtualbox.
+You can get virtualbox to work again by issuing the command (in an admin shell):
+
+bcdedit /SET hypervisorlaunchtype off
+
+and reboot windows 10. NOW WSL2 is not working but virtualbox is. To switch back:
+
+bcdedit /SET hypervisorlaunchtype auto
+
+and reboot windows10.
+
 
 Go to the top end try setting the environment variables and run an example
 
