@@ -1512,10 +1512,18 @@ c**
 	xt = xx
 	yt = yy
 	ofs = nch * vsiz
-	if(ijus) 28,26,27
-26	xt = xt - .5*ofs
-	goto 28
-27	yt = yt + ofs
+	if (ijus.gt.0) then
+	  yt = yt + ofs
+	endif
+	if (ijus.eq.0) then
+	  xt = xt - .5*ofs
+	endif
+c-- 20200512 - FJ - The two if-then/endif introduced before this line remove the need for the depracated arithmetic if
+c--                 This was apparently removed in Fortran 2018 - although it only throws a warning
+c	if(ijus) 28,26,27
+c26	xt = xt - .5*ofs
+c	goto 28
+c27	yt = yt + ofs
 28	rx = xt*cosa - yt*sina
 	ry = yt*cosa + xt*sina
 	call symbol(rx,ry,vsiz,cbuf(indx:),theta,nch)
@@ -1782,9 +1790,12 @@ c
 	     if (ifs .ge. ils) goto 32
 c
 		do 10 i=ifs,ils
-		   ismb = smbtab(i)
-		   ix=iand(ishft(ismb,-4) , 7 ) -2
-		   iy=iand(ismb,15)-2
+		   ismb  = smbtab(i)
+c-- 20200512 - FJ - Introduced ismb4 to solve a gfortran type conversion error in gfortran/gcc 9.3.0
+c--                 I do not understand why the ishft a few lines down does not cause the same problem ??
+		   ismb4 = ismb
+		   ix=iand(ishft(ismb4,-4) , 7 ) -2
+		   iy=iand(ismb4,15)-2
 		   xt=cx+ca*ix-sa*iy
 		   yt=cy+sa*ix+ca*iy
 		   ipen=ishft(ismb,-7)+2

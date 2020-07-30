@@ -2806,7 +2806,7 @@ c-- Looked wrong at first, but the start value of k is critical - 941 appears to
  4      continue
         if (swbin) then
           inquire (unit=lun,name=filename)
-          if (index(filename,'MN2-2').ne.0) then
+          if (index(filename,'MN2-2').ne.0.or.index(filename,'MN2_2').ne.0) then
             j = index(filename,'MN2') + 2
           else
             j = index(filename,'MN2')
@@ -6761,12 +6761,6 @@ c
       write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 m and 500 m data)'
       write (*,'(a)') '                ==> Example : ./hrpt.exe panmodis.txt 221 gapcor project=121 gammargb=0.92,0.98,0.92 fast histcor binary merge modispan=correct'
       write (*,'(a)') '  gammargb=x,y,z => Used to specify separate gammas for R, G and B example - gammargb=0.92,0.98,0.92 - only applied to the projected or the border image - note : it changes (slightly) the border and longlat colours'
-      write (*,'(a)') '  rcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 rcorrect=-0.2 will apply a gamma of 0.9 at the center '
-      write (*,'(a)') '                    of the scanline and a value of 0.7 at the left and right edges. A value for rcorrect should not generally be needed.'
-      write (*,'(a)') '  gcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 gcorrect=-0.2 will apply a gamma of 1.0 at the center '
-      write (*,'(a)') '                    of the scanline and a value of 0.8 at the left and right edges. gcorrect=-0.15 appears to be good for MODIS (with the bcorrect=-0.25 as well)'
-      write (*,'(a)') '  bcorrect=x    ==> Used to specify a correction to the specified or default gammargb values accros the scanline from the center to the edge. Say Gammargb=0.9,1.0,1.1 bcorrect=-0.2 will apply a gamma of 1.1 at the center '
-      write (*,'(a)') '                    of the scanline and a value of 0.9 at the left and right edges. bcorrect=-0.25 appears to be good for MODIS (with the gcorrect=-0.15 as well)'
       write (*,'(a)') ''
       write (*,'(a)') 'Inherited by other s/w'
       write (*,'(a)') '  bowtie=x.y,x.y ==> Passed on to readbin_modis.exe as part of the command string to set the bowtie correction parameters - default : bowtie=0.18,0.42 defined inside readbin_bowtie.f'

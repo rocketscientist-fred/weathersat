@@ -1,13 +1,17 @@
       implicit none
       logical swpng, swdebug, swcorrect, swnight, swfitlin, swterra
-      integer*1 inbuf(642), timbuf(28), timbuf_zero(28), inbuf_night(276)
+c
+      integer*4 n_max, n_actual, n_req, n_valid
+      parameter (n_max=1024, n_valid=2000000)
+c
+      integer*1 inbuf(642), timbuf(28), timbuf_zero(28), inbuf_night(276), buf(n_max), i_b1, i_b2, i_p1, i_p2, rotbuf(8), outbuf(276), rotout(284), pkt_type, irec_valid(n_valid)
 c-- The image buffers - cater also for 13H and 14H
       integer*2 buffer_250m(216640,2), buffer_500m(54160,5), buffer_1km(13540,31), buffer_zero_250m(216640,2), buffer_zero_500m(54160,5), buffer_zero_1km(13540,31)
-      integer*2 npos
-      integer*4 lun, ios, irec, frame_count, mirror_side, packet_in_group, dy1958, doy, iyr, timhist(8640), yrhist(105), doyhist(366), packet_nr, pkt_type, msechist(8640000)
-      integer*4 nlines(38), lunband(38), nrecl(38), irecband, luntim(38), doy_zero
-      integer*4 i, i_max, f_min, i_doy, i_yr, i_sum, j, k, l, i_ext, i_dir, ib, it_ref, i_tref, i_arg
-      real*8    timestamp, t_min, t_max, timestamp_zero, theta1, theta_zero1, theta_pk_pk1, theta2, theta_zero2, theta_pk_pk2
+      integer*2 npos, index_correct(10000), rgbbuf(3, 5416), rgbbuf_correct(3,10000), bwbuf(5416,2)
+      integer*4 lun, ios, irec, frame_count, mirror_side, packet_in_group, dy1958, doy, iyr, timhist(8640), yrhist(105), doyhist(366), packet_nr, pkt_length, msechist(8640000)
+      integer*4 nlines(38), lunband(38), nrecl(38), irecband, luntim(38), doy_zero, imn, ida, i_hit, i_ptr, n_pkt, i_sav, j_ptr, maxlengap
+      integer*4 i, i_max, f_min, i_doy, i_yr, i_sum, j, k, l, i_ext, i_dir, ib, it_ref, i_tref, i_arg, lunnight, i_tref_init, ncorrect_pix
+      real*8    timestamp, t_min, t_max, timestamp_zero, theta1, theta_zero1, theta_pk_pk1, theta2, theta_zero2, theta_pk_pk2, timestamp_prev, timediff(n_valid), t_thresh
       character*2   cband
       character*250 argstring, outstring, command
 c
@@ -15,6 +19,7 @@ c
       equivalence (timbuf_zero(1), timestamp_zero), (timbuf_zero(9), doy_zero), (timbuf_zero(13), theta_zero1), (timbuf_zero(21), theta_zero2)
 c
       i_tref       = 8640001
+      maxlengap    = 125
 c-- The bow tie correction requires two different angles for left and right side correction  (at least for Ch 1) ........
 c-- For a North direction pass, theta1 is the right hand side of the image :-) (which is -Y in hrsc.f .....)
 c-- The bowgamma is defined in hrpt.f
@@ -22,6 +27,12 @@ c-- The bowgamma is defined in hrpt.f
       theta_pk_pk2 = 0.42D0
 c-- Value 2 is for the left hand side (as seen in the track direction - so left for a N pass); Value 1 for the right hand side
 c
+c-- Set all records to invalid
+      do i = 1, n_valid
+        irec_valid(i) = 1
+        timediff(i)   = 0.0D0
+      enddo
+      t_thresh  = 5.0D0
       call get_lun(lun)
       swpng     = .true.
       swdebug   = .false.
@@ -51,12 +62,99 @@ c
       enddo
       call getarg(1,argstring)
       if (index(argstring,'TE_').ne.0) swterra = .true.
+      n_actual = -1
+      i_ext = index(argstring,'.bin')
+      irec  = 1
       if (.not.swnight) then
         open (unit=lun,file=argstring(1:lnblnk(argstring)), access='direct',form='unformatted',recl=642)
       else
-        open (unit=lun,file=argstring(1:lnblnk(argstring)), access='direct',form='unformatted',recl=276)
+c-- Pre-filter to get rid of engineering packets
+        call get_lun(lunnight)
+        open (unit=lunnight,file=argstring(1:i_ext-1)//'.nig', access='direct',form='unformatted',recl=276)
+        i_ptr = 0
+        do i = lnblnk(argstring), 1, -1
+          if (argstring(i:i).eq.'/'.and.i_ptr.eq.0) i_ptr = i
+        enddo
+        read (argstring(i_ptr+10:i_ptr+13),'(I4)')   iyr
+        read (argstring(i_ptr+15:i_ptr+16),'(I2.2)') imn
+        read (argstring(i_ptr+18:i_ptr+19),'(I2.2)') ida
+        call datetodoy(iyr, imn, ida, doy)
+        call doy_to_dy1958(dy1958, doy, iyr)
+        i_b2  =       iand(dy1958,'000000FF'x)
+        i_b1  = ishft(iand(dy1958,'0000FF00'x),-8)
+        n_pkt = 269
+        i_p2  =       iand(n_pkt ,'000000FF'x)
+        i_p1  = ishft(iand(n_pkt ,'0000FF00'x),-8)
+        i_hit = 0
+        i_ptr = 0
+        i_sav = 0
+        j_ptr = 0
+        do while (.true.)
+          n_req = 1024
+          call get_TM(argstring(1:lnblnk(argstring)), buf, n_max, n_actual, n_req)
+          if (n_actual.eq.n_req) then
+            do i = 1,n_actual
+              do j = 1,7
+                rotbuf(j) = rotbuf(j+1)
+              enddo
+              rotbuf(8) = buf(i)
+              do j = 1,283
+                rotout(j) = rotout(j+1)
+              enddo
+              rotout(284) = buf(i)
+              i_ptr = i_ptr + 1
+              if (buf(i).eq.i_p1.and.i_hit.eq.0) then
+                i_hit = 1
+                goto 10
+              endif
+              if (buf(i).eq.i_p2.and.i_hit.eq.1) then
+                i_hit = 2
+                goto 10
+              endif
+              if (buf(i).eq.i_b1.and.i_hit.eq.2) then
+                i_hit = 3
+                goto 10
+              endif
+              if (buf(i).eq.i_b2.and.i_hit.eq.3) then
+c-- put the 8 bytes in a buffer and set j_ptr to 9
+                write (*,'(I10,2x,I10,2x,8(Z2.2,1x))') i_ptr, i_ptr-i_sav, (rotbuf(k),k=1,8)
+c                read (*,*)
+                if (i_ptr-i_sav.eq.276) then
+                  do k = 1, 276
+                    outbuf(k) = rotout(k)
+                  enddo
+                  write (lunnight,rec=irec) outbuf
+                  write (*,*) irec
+                  irec = irec + 1
+                endif
+                i_sav = i_ptr
+                i_hit = 0
+                goto 10
+              endif
+              i_hit = 0
+ 10           continue
+            enddo
+c
+c            if (pkt_type.eq.1.and.pkt_length.eq.269) then
+c              n_req = 261
+c              call get_TM(argstring(1:lnblnk(argstring)), buf(16), n_max, n_actual, n_req)
+c            else if ((pkt_type.eq.2.or.pkt_type.eq.4).and.pkt_length.eq.635) then
+c              n_req = 627
+c              call get_TM(argstring(1:lnblnk(argstring)), buf(16), n_max, n_actual, n_req)
+c            else
+c              n_req = 261
+c              call get_TM(argstring(1:lnblnk(argstring)), buf(16), n_max, n_actual, n_req)
+c            endif
+          else
+            write (*,'(''Night file error : '',2I10)') n_actual, n_req
+            goto 11
+          endif
+        enddo
+ 11      close (unit=lunnight)
+        call free_lun(lunnight)
+c
+        open (unit=lun,file=argstring(1:i_ext-1)//'.nig', access='direct',form='unformatted',recl=276)
       endif
-      i_ext = index(argstring,'.bin')
       i_dir = 0
       do i = lnblnk(argstring), 1, -1
         if (argstring(i:i).eq.'/'.and.i_dir.eq.0) i_dir = i
@@ -143,7 +241,14 @@ c
       irec = 1
       do while (.true.)
         ios  = 0
-        read (lun, rec=irec, iostat=ios) inbuf
+        if (.not.swnight) then
+          read (lun, rec=irec, iostat=ios) inbuf
+        else
+          read (lun, rec=irec, iostat=ios) inbuf_night
+          do i = 1, 276
+            inbuf(i) = inbuf_night(i)
+          enddo
+        endif
         if (ios.ne.0) goto 1
         dy1958 = inbuf(7)
         if (inbuf(7).lt.0) dy1958 = dy1958 + 256
@@ -163,7 +268,8 @@ c
         irec = irec + 1
       enddo
  1    i_max = -1
-      if (swdebug) write (*,*) irec
+      if (swdebug) write (*,*) '# Records          : ', irec
+      if (irec.gt.n_valid) stop "** Increase n_valid **"
       do i = 1, 8640
         if (timhist(i).ge.i_max) i_max = i
       enddo
@@ -177,8 +283,9 @@ c-- Take 10% of the maximum as a lower limit window
           i_sum = i_sum + timhist(i)
         endif
       enddo
-      if (swdebug) write (*,*) i_sum
+      if (swdebug) write (*,*) '# Valid timestamps : ', i_sum
       do i = 1,8640
+        if (swdebug) write (*,*) i, timhist(i), f_min
         if (timhist(i).ge.f_min.and.t_min.eq.0.0D0) t_min = dble(i-1) * 10.0D0 + 5.0
       enddo
       do i = 8640, 1, -1
@@ -201,6 +308,55 @@ c-- Take 10% of the maximum as a lower limit window
         endif
       enddo
       write (*,'(''Year validity            : '',I15)') i_yr
+c-- Determine which records inside the time window are valid (ie outlier elimination)
+      irec = 1
+      do while (.true.)
+        ios  = 0
+        if (.not.swnight) then
+          read (lun, rec=irec, iostat=ios) inbuf
+        else
+          read (lun, rec=irec, iostat=ios) inbuf_night
+          do i = 1, 276
+            inbuf(i) = inbuf_night(i)
+          enddo
+        endif
+        if (ios.ne.0) goto 12
+        if (ishft(iand(inbuf(16),'80'x),-7).eq.0) then
+          pkt_type    = ishft(iand(inbuf(15),'70'x),-4)
+          dy1958 = inbuf(7)
+          if (inbuf(7).lt.0) dy1958 = dy1958 + 256
+          dy1958 = dy1958 * 256
+          dy1958 = dy1958 + inbuf(8)
+          if (inbuf(8).lt.0) dy1958 = dy1958 + 256
+          call dy1958_to_doy(dy1958, doy, iyr)
+          call MODIS_time(inbuf(9),6,timestamp)
+          if (irec.gt.1) then
+            if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
+c            if (t_min.le.timestamp.and.timestamp.le.t_max) then
+              timediff(irec)   = timestamp - timestamp_prev
+              irec_valid(irec) = 0
+              timestamp_prev = timestamp
+            endif
+          endif
+        endif
+        irec = irec + 1
+      enddo
+ 12   i = 1
+      j = 1
+      do while (j.le.irec-1)
+        if (irec_valid(i).eq.0) then
+          j = i + 1
+          do while (irec_valid(j).ne.0.and.j.le.irec-1)
+            j = j + 1
+          enddo
+          if (abs(timediff(i)).gt.t_thresh.and.(abs(timediff(i)+timediff(j)).lt.t_thresh)) irec_valid(i) = 1
+          i = j
+        else
+          i = i + 1
+        endif
+      enddo
+c-- End of outlier determination
+c
 c-- Test of 10 msec bin time hist as filter/trigger criteria for write
       i_max = -1
       do i = 1, 8640000
@@ -209,8 +365,10 @@ c-- Test of 10 msec bin time hist as filter/trigger criteria for write
       if (swdebug) write (*,*) i_max
       j = 1
       it_ref = 0
+      i_tref_init = -1
       do i = 1, 8640000
         if (msechist(i).ge.int(i_max/10)) then
+          if (i_tref_init.lt.0.and.i.ge.nint(100.0*t_min)) i_tref_init = i
           if (swdebug) write (*,*) j, i, msechist(i), i - it_ref
           j      = j + 1
           it_ref = i
@@ -224,6 +382,7 @@ c-- Now prepare the corrections per idet/ifov - if requested
 c-- Separate the day and night passes - duplicates code, but simpler overview !
         if (.not.swnight) then
 c-- Daytime data processing - is default
+          i_tref = i_tref_init
           do while (.true.)
             ios  = 0
             read (lun, rec=irec, iostat=ios) inbuf
@@ -245,14 +404,14 @@ c-- Daytime data processing - is default
               call dy1958_to_doy(dy1958, doy, iyr)
               call MODIS_time(inbuf(9),6,timestamp)
 c-- Timestamp and doy go (modified) to the time buffer for the georeferencing SGP4 TLE calc
-              if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
-c              write (*,'(''Packet Count : '',I7,1x,''Packet # in group : '',I2,1x,''Mirror_side : '',I10,1x,''Frame Count : '',I10,'' Year, doy, time : '',2I7,F15.6,I15)') packet_nr,packet_in_group, mirror_side + 1, frame_count, iyr, doy, timestamp, dy1958
-c              if (mod(irec,40).eq.0) read  (*,*)
+c              if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
+              if (irec_valid(irec).eq.0) then
+                timestamp_prev = timestamp
 c-- Check the timestamp to see whether a 'flush' is needed.
                 i = int(timestamp*100.0D0) + 1
                 if (msechist(i).gt.int(i_max/10).and.i.gt.i_tref) then
 c-- Before we flush try to capture the wrong times that slip through - this could be done better by pre-building a tble to flag out of sequence times
-                  if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 3
+                  if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.maxlengap) goto 3
 c-- Write band01 and band02
                   do ib = 1,2
                     call modis_hist(buffer_250m(1,ib), 216640, ib, swterra)
@@ -282,7 +441,7 @@ c-- Write band08 through band38
                   enddo
                 endif
                 i = int(timestamp*100.0D0) + 1
-                if (msechist(i).gt.int(i_max/10)) i_tref = i
+                if (msechist(i).gt.int(i_max/10).and.(nint((float(i)-float(i_tref))/147.7).gt.0)) i_tref = i
                 call band_image(inbuf, 642, packet_in_group, 1, buffer_250m(1,1), 4, 1354, 4, 10, mirror_side + 1, frame_count)
                 call band_image(inbuf, 642, packet_in_group, 2, buffer_250m(1,2), 4, 1354, 4, 10, mirror_side + 1, frame_count)
                 call band_image(inbuf, 642, packet_in_group, 3, buffer_500m(1,1), 2, 1354, 2, 10, mirror_side + 1, frame_count)
@@ -356,6 +515,7 @@ c-- Write band08 through band38
           enddo
         else
 c-- Night data processing
+          i_tref = i_tref_init
           do while (.true.)
             ios  = 0
             read (lun, rec=irec, iostat=ios) inbuf_night
@@ -377,12 +537,14 @@ c-- Night data processing
               call dy1958_to_doy(dy1958, doy, iyr)
               call MODIS_time(inbuf_night(9),6,timestamp)
 c-- Timestamp and doy go (modified) to the time buffer for the georeferencing SGP4 TLE calc
-              if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
+c              if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
+              if (irec_valid(irec).eq.0) then
+                timestamp_prev = timestamp
 c-- Check the timestamp to see whether a 'flush' is needed.
                 i = int(timestamp*100.0D0) + 1
                 if (msechist(i).gt.int(i_max/10).and.i.gt.i_tref) then
 c-- Before we flush try to capture the wrong times that slip through - this could be done better by pre-building a tble to flag out of sequence times
-                  if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 5
+                  if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.maxlengap) goto 5
 c-- Write band20 through band36
                   do ib = 20,36
                     call modis_hist(buffer_1km(1,ib-7), 13540, ib, swterra)
@@ -394,7 +556,7 @@ c-- Write band20 through band36
                   enddo
                 endif
                 i = int(timestamp*100.0D0) + 1
-                if (msechist(i).gt.int(i_max/10)) i_tref = i
+                if (msechist(i).gt.int(i_max/10).and.(nint((float(i)-float(i_tref))/147.7).gt.0)) i_tref = i
                 call band_image_night(inbuf_night, 276, packet_in_group,20, buffer_1km(1,13) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
                 call band_image_night(inbuf_night, 276, packet_in_group,21, buffer_1km(1,14) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
                 call band_image_night(inbuf_night, 276, packet_in_group,22, buffer_1km(1,15) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
@@ -435,6 +597,7 @@ c--  End of correction preparation
 c-- Separate the day and night passes - duplicates code, but simpler overview !
       if (.not.swnight) then
 c-- Daytime data processing - is default
+        i_tref = i_tref_init
         do while (.true.)
           ios  = 0
           read (lun, rec=irec, iostat=ios) inbuf
@@ -456,16 +619,20 @@ c-- Daytime data processing - is default
             call dy1958_to_doy(dy1958, doy, iyr)
             call MODIS_time(inbuf(9),6,timestamp)
 c-- Timestamp and doy go (modified) to the time buffer for the georeferencing SGP4 TLE calc
-            if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
-c              write (*,'(''Packet Count : '',I7,1x,''Packet # in group : '',I2,1x,''Mirror_side : '',I10,1x,''Frame Count : '',I10,'' Year, doy, time : '',2I7,F15.6,I15)') packet_nr,packet_in_group, mirror_side + 1, frame_count, iyr, doy, timestamp, dy1958
-c              if (mod(irec,40).eq.0) read  (*,*)
+c            if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0.and.irec_valid(irec).eq.0) then
+            if (irec_valid(irec).eq.0) then
+              if (swdebug) write (*,'(''Packet Count : '',I7,1x,''Packet # in group : '',I2,1x,''Mirror_side : '',I10,1x,''Frame Count : '',I10,'' Year, doy, time : '',2I7,F15.6,I15,F15.6,I10)') 
+     *          packet_nr, packet_in_group, mirror_side + 1, frame_count, iyr, doy, timestamp, dy1958, timestamp - timestamp_prev, irec_valid(irec)
+              timestamp_prev = timestamp
 c-- Check the timestamp to see whether a 'flush' is needed.
               i = int(timestamp*100.0D0) + 1
               if (msechist(i).gt.int(i_max/10).and.i.gt.i_tref) then
 c-- Before we flush try to capture the wrong times that slip through - this could be done better by pre-building a tble to flag out of sequence times
-                if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 7
+                if (swdebug) write (*,*) i, i_tref, nint((float(i)-float(i_tref))/147.7)
+                if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.maxlengap) goto 7
 c-- Flush the required empty buffers
                 if (nint((float(i)-float(i_tref))/147.7).gt.1) then
+                  if (swdebug) write (*,'(''Flushing'',I6,'' empty buffers'')') nint((float(i)-float(i_tref))/147.7) - 1
                   do l = 1, nint((float(i)-float(i_tref))/147.7) - 1
 c-- Write band01 and band02
                     doy_zero       = doy
@@ -609,7 +776,7 @@ c-- Write band08 through band38
                 enddo
               endif
               i = int(timestamp*100.0D0) + 1
-              if (msechist(i).gt.int(i_max/10)) i_tref = i
+              if (msechist(i).gt.int(i_max/10).and.(nint((float(i)-float(i_tref))/147.7).gt.0)) i_tref = i
               call band_image(inbuf, 642, packet_in_group, 1, buffer_250m(1,1), 4, 1354, 4, 10, mirror_side + 1, frame_count)
               call band_image(inbuf, 642, packet_in_group, 2, buffer_250m(1,2), 4, 1354, 4, 10, mirror_side + 1, frame_count)
               call band_image(inbuf, 642, packet_in_group, 3, buffer_500m(1,1), 2, 1354, 2, 10, mirror_side + 1, frame_count)
@@ -755,9 +922,46 @@ c-- Create PNG's for band01 and band02
             write (*,*) command(1:lnblnk(command))
             call system(command(1:lnblnk(command)))
           enddo
+c-- Create a quick-and-dirty earth curvature corrected RGB=221 image here ?
+          if (swpng) then
+            do i = 1, 3
+              call get_lun(lunband(i))
+            enddo
+            do i = 1, 2
+              nrecl(i) = 5416
+              write (cband,'(I2.2)') i
+              open (unit=lunband(i),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-band'//cband//'.dat', access='direct',form='unformatted',recl=nrecl(i)*2)
+            enddo
+            call correct_init(710.0,110.0, 5416, index_correct, 10000, ncorrect_pix)
+            open (unit=lunband(3),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221.rgb',form='unformatted', access='direct',recl=2*ncorrect_pix*6)
+            close (unit=lunband(3),status='delete', iostat=ios)
+            open (unit=lunband(3),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221.rgb',form='unformatted', access='direct',recl=2*ncorrect_pix*6)
+            do i = 1, min(nlines(1), nlines(2))
+              do j = 1, 2
+                call read_buffer(lunband(j), i, bwbuf(1,j), nrecl(j))
+              enddo
+              do j = 1, 5416
+                rgbbuf(1,j) = bwbuf(j,2)
+                rgbbuf(2,j) = bwbuf(j,2)
+                rgbbuf(3,j) = bwbuf(j,1)
+              enddo
+              call correct_apply(rgbbuf, 3, 5416, rgbbuf_correct, 3, 2 * ncorrect_pix, index_correct, ncorrect_pix, lunband(3), i)
+            enddo
+            do i = 1, 3
+              close (unit=lunband(i))
+              call free_lun(lunband(i))
+            enddo
+            write (command,'(''convert -depth 16 -endian lsb -size '',I5.5,''x'',I5.5,'' rgb:'',a,'' -equalize -depth 16 '',a)') 2*ncorrect_pix, min(nlines(1),nlines(2)), 
+     *            outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221.rgb', 
+     *            outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221'//'.png'
+            write (*,*) command(1:lnblnk(command))
+            call system(command(1:lnblnk(command)))
+          endif
+c-- End of quick-and-dirty earth curvature corrected RGB=221 image here
         endif
       else
 c-- Night data processing
+        i_tref = i_tref_init
         do while (.true.)
           ios  = 0
           read (lun, rec=irec, iostat=ios) inbuf_night
@@ -779,14 +983,20 @@ c-- Night data processing
             call dy1958_to_doy(dy1958, doy, iyr)
             call MODIS_time(inbuf_night(9),6,timestamp)
 c-- Timestamp and doy go (modified) to the time buffer for the georeferencing SGP4 TLE calc
-            if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.0) then
+c            if (t_min.le.timestamp.and.timestamp.le.t_max.and.iyr.eq.i_yr.and.doy.eq.i_doy.and.pkt_type.eq.1) then
+            if (irec_valid(irec).eq.0) then
+              if (swdebug) write (*,'(''Packet Count : '',I7,1x,''Packet # in group : '',I2,1x,''Mirror_side : '',I10,1x,''Frame Count : '',I10,'' Year, doy, time : '',2I7,F15.6,I15,F15.6,I10)') 
+     *          packet_nr, packet_in_group, mirror_side + 1, frame_count, iyr, doy, timestamp, dy1958, timestamp - timestamp_prev, irec_valid(irec)
+              timestamp_prev = timestamp
 c-- Check the timestamp to see whether a 'flush' is needed.
               i = int(timestamp*100.0D0) + 1
               if (msechist(i).gt.int(i_max/10).and.i.gt.i_tref) then
 c-- Before we flush try to capture the wrong times that slip through - this could be done better by pre-building a tble to flag out of sequence times
-                if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.50) goto 9
+                if (swdebug) write (*,*) i, i_tref, nint((float(i)-float(i_tref))/147.7)
+                if (nint((float(i)-float(i_tref))/147.7).lt.0.or.nint((float(i)-float(i_tref))/147.7).gt.maxlengap) goto 9
 c-- Flush the required empty buffers
                 if (nint((float(i)-float(i_tref))/147.7).gt.1) then
+                  if (swdebug) write (*,'(''Flushing'',I6,'' empty buffers'')') nint((float(i)-float(i_tref))/147.7) - 1
                   do l = 1, nint((float(i)-float(i_tref))/147.7) - 1
                     doy_zero       = doy
 c-- Write band20 through band36
@@ -839,7 +1049,7 @@ c-- Write band20 through band36
                 enddo
               endif
               i = int(timestamp*100.0D0) + 1
-              if (msechist(i).gt.int(i_max/10)) i_tref = i
+              if (msechist(i).gt.int(i_max/10).and.(nint((float(i)-float(i_tref))/147.7).gt.0)) i_tref = i
               call band_image_night(inbuf_night, 276, packet_in_group,20, buffer_1km(1,13) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
               call band_image_night(inbuf_night, 276, packet_in_group,21, buffer_1km(1,14) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
               call band_image_night(inbuf_night, 276, packet_in_group,22, buffer_1km(1,15) , 1, 1354, 1, 10, mirror_side + 1, frame_count)
@@ -936,6 +1146,25 @@ c
       enddo
       timestamp = dble(time_msec) / 1000.0D0 + dble(time_musec)/1000000.0D0
 c
+      return
+      end
+
+c-- Convert days since 1-Jan-1958 to day in current year
+      subroutine doy_to_dy1958(dy1958, doy, iyr)
+      implicit none
+      integer*4 dy1958, doy, iyr
+c
+      integer*4 i_day, i_yr
+c
+      dy1958 = 0
+      do i_yr = 1958, iyr - 1
+        if (mod(i_yr,4).eq.0.and.i_yr.ne.2000) then
+          dy1958 = dy1958 + 366
+        else
+          dy1958 = dy1958 + 365
+        endif
+      enddo
+      dy1958 = dy1958 + doy
       return
       end
 
@@ -1135,7 +1364,7 @@ c
       integer*2 dn
       integer*4 isamp, idet, ifov, i_off, i_byte
       integer*4 index08_1(5), index08_2(5)
-      data index08_1/ 144,1140,2136,3132,4128/
+      data index08_1/ 144, 348, 552, 756, 980/
       data index08_2/1164,1368,1572,1776,1980/
 c-- Sanity checks
       if (imir.eq.0.or.imir.eq.3) return
@@ -1240,6 +1469,15 @@ c
       integer*2 array(n)
 c
       write (lun,rec=irec) array
+      return
+      end
+
+      subroutine read_buffer(lun,irec,array,n)
+      implicit none
+      integer*4 n, irec, lun
+      integer*2 array(n)
+c
+      read (lun,rec=irec) array
       return
       end
 
@@ -1737,5 +1975,162 @@ c-- Fix the vertical scaling
       call pkg_pltextbl(ctxt(1:lnblnk(ctxt)),1)
       call pkg_clospl()
       call free_lun(lunplot)
+      return
+      end
+
+      subroutine get_TM(filenm,NCTRS_TM,n_max,n_actual,n_req)
+      implicit none
+c
+      integer*4 n_max, n_actual, n_req
+      integer*1 NCTRS_TM(n_max)
+      character*(*) filenm
+c
+      integer*1 tm_buffer(1024)
+c
+      integer*4 iptr, irec, lun, n_used, i, nbytes, eof
+c
+      save iptr, tm_buffer, irec, lun, nbytes, eof
+c
+      n_used = 0
+      if (n_actual.eq.-1) then
+        call get_lun(lun)
+        irec = 0
+        open (unit=lun,file=filenm,status='old',form='unformatted',access='direct',recl=1024)
+        inquire (file=filenm, size=nbytes)
+        iptr = 0
+        eof  = 0
+        call get_file_buffer_i1(lun,1024,tm_buffer,irec,iptr)
+      endif
+      do i = 1, n_req
+        iptr = iptr + 1
+        if (iptr.gt.1024) then
+          call get_file_buffer_i1(lun,1024,tm_buffer,irec,iptr)
+          if (irec*1024.gt.nbytes) then
+            eof = 1
+          endif
+          if (irec.eq.-1) then
+            close (unit=lun)
+            call free_lun(lun)
+            n_actual = -1
+            return
+          endif
+        endif
+        if (eof.eq.1) then
+          if (iptr+(irec-1)*1024.gt.nbytes) then
+            eof = 0
+            close (unit=lun)
+            call free_lun(lun)
+            n_actual = -1
+            return
+          endif
+        endif
+        n_used = n_used + 1
+        NCTRS_TM(n_used) = tm_buffer(iptr)
+      enddo
+      n_actual = n_used
+      return
+      end
+
+      subroutine get_file_buffer_i1(lun,nbytes,buffer,irec,iptr)
+      implicit none
+      integer*4 lun, nbytes, irec, iptr, ios
+      integer*1 buffer(nbytes)
+c
+      irec = irec + 1
+      ios = 0
+      read (lun,rec=irec,iostat=ios) buffer
+      if (ios.ne.0) goto 1
+      if (iptr.gt.nbytes) iptr = iptr - nbytes
+      return
+ 1    irec = -1
+      return
+      end
+
+      subroutine datetodoy(iyr, imn, ida, doy)
+      implicit none
+      integer*4 iyr, imn, ida, doy
+c
+      integer*4 monthdays(12), i
+c
+      data monthdays/31,0,31,30,31,30,31,31,30,31,30,31/
+c
+      save
+c
+      if (mod(iyr,4).eq.0.and.iyr.ne.2000) then
+        monthdays(2) = 29
+      else
+        monthdays(2) = 28
+      endif
+      doy = 0
+      do i = 1, imn - 1
+        doy = doy + monthdays(i)
+      enddo
+      doy = doy + ida
+      return
+      end
+
+      subroutine correct_init(sat_avg_alt, sat_fov, nsat_pix, index_correct, nmax, ncorrect_pix)
+      implicit none
+      integer*4 nsat_pix, ncorrect_pix, i, nmax
+      integer*2 index_correct(nmax)
+      real*4 sat_avg_alt, sat_fov
+c
+      real*4 pix_ang, pix_siz, pix_pos, lat_off, sca_ang, rad_earth, cir_earth, pi
+c
+      save
+c
+      pi           = 2.0 * asin(1.0)
+      ncorrect_pix = 0
+      rad_earth    = 6371.0
+      cir_earth    = pi * 2.0 * rad_earth
+      pix_ang      = pi * (sat_fov / 180.0) / float(nsat_pix)
+      pix_siz      = sat_avg_alt * tan(pix_ang)
+      i = 1
+      do while (.true.)
+        pix_pos = 2.0 * pi * (((pix_siz/2.0) + (float(i-1) * pix_siz)) / cir_earth)
+        lat_off = sin(pix_pos) * rad_earth
+        sca_ang = atan(lat_off/(sat_avg_alt+rad_earth*(1.0-cos(pix_pos))))
+c        write (*,*) i, nint(sca_ang/pix_ang)
+        ncorrect_pix = ncorrect_pix + 1
+        index_correct(i) = nint(sca_ang/pix_ang)
+        if (nint(sca_ang/pix_ang).eq.nsat_pix/2) goto 1
+        i = i + 1
+      enddo
+ 1    continue
+c
+      return
+      end
+
+      subroutine correct_apply(rgbbuf, nx, ny, rgbbuf_correct, nxc, nyc, index_correct, nxi, lun, irec)
+      implicit none
+      integer*4 nx, ny, nxc, nyc, nxi, lun, irec
+      integer*2 rgbbuf(nx, ny), rgbbuf_correct(nxc, nyc), index_correct(nxi)
+c
+      integer*4 i, j, k, k1, k2
+      if (nx.ne.3.or.nxc.ne.3) stop '** correct_apply - nx and nyc have to have a value of 3 (RGB only)'
+      j = nyc / 2
+      k = ny  / 2
+      do i = 1,j
+        k1 = index_correct(i) + k
+        k2 = k - index_correct(i) + 1
+        rgbbuf_correct(1, j + i)     = rgbbuf(1,k1)
+        rgbbuf_correct(1, j - i + 1) = rgbbuf(1,k2)
+        rgbbuf_correct(2, j + i)     = rgbbuf(2,k1)
+        rgbbuf_correct(2, j - i + 1) = rgbbuf(2,k2)
+        rgbbuf_correct(3, j + i)     = rgbbuf(3,k1)
+        rgbbuf_correct(3, j - i + 1) = rgbbuf(3,k2)
+      enddo
+      call correct_write (lun, irec, rgbbuf_correct, nxc, nyc)
+c
+      return
+      end
+
+      subroutine correct_write (lun_correct, irec, histrgb_correct, nx, ny)
+      implicit none
+      integer*4 nx, ny, irec, lun_correct
+      integer*2 histrgb_correct(nx, ny)
+c
+      write (lun_correct,rec=irec) histrgb_correct
+c
       return
       end
