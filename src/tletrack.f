@@ -4,8 +4,8 @@ c-- nmaxpass is the maximum nr of passes that can be stored over the to be analy
 c-- nmaxpointing is the maximum nr of timesteps that can be stored per single pass
 c-- nsatmax is the maximum nr of satellites that can be analysed in one single run
 c
-      integer*4 nmaxpass, nmaxpointing, nsatmax
-      parameter (nmaxpass=1000, nmaxpointing=40000, nsatmax=50)
+      integer*4 nmaxpass, nmaxpointing, nsatmax, nmaxcross
+      parameter (nmaxpass=1000, nmaxpointing=40000, nsatmax=50, nmaxcross=50)
 c
       real*8    sat_az_pass(nmaxpointing,nmaxpass)    , sat_el_pass(nmaxpointing,nmaxpass)    , time_pass(nmaxpointing,nmaxpass)
       real*8    sat_az_track(nmaxpointing,nmaxpass)   , sat_el_track(nmaxpointing,nmaxpass)   , time_track(nmaxpointing,nmaxpass)
@@ -17,27 +17,36 @@ c
       character*20 c_sat_pass(nmaxpass), c_sat_use(nsatmax), c_sat_type(nsatmax)
 c-- Diagnostic variables - can be deleted if plots no longer needed
       integer*4 i1, i2, i3, i4, i5, i6
-      real*8    angle1, angle2, azpark, elpark
+      real*8    angle1, angle2, azpark, elpark, aztst, eltst
 c
       real*8    doy_tle, time, ro(3), vo(3), long, lat, theta0g, time_start, sat_az, sat_el, rsc, sat_el_max, time_max, el_track_min
       real*8    torad, todeg, track_angle, x1, y1, z1, x2, y2, z2, time_save, secsubsteps, time_offset, rsc1, rsc2, elpriothresh
       real*8    azrate, elrate, azoff, eloff, azrange(2), elrange(2), sunaz, sunel, sunaz1, sunel1, sunaz2, sunel2, anglesun, sunrate
-      real*8    suntim1, suntim2, sunrepoint, sunahead
+      real*8    suntim1, suntim2, sunrepoint, sunahead, elpower, azpower, delta_t_la, azhor, elhor
 c-- Raster variables
-      real*8  grid_az, grid_el, grid_az_range, grid_el_range, grid_az_step, grid_el_step, grid_delta_t, az_cmd, el_cmd, t_move, az1, el1
-      logical swgrid
+      real*8    grid_az, grid_el, grid_az_range, grid_el_range, grid_az_step, grid_el_step, grid_delta_t, az_cmd, el_cmd, t_move, az1, el1, azavg, elavg
+      integer*4 ncrossaz, ncrossel
+      real*4    azresp(nmaxcross), elresp(nmaxcross), azx(nmaxcross), elx(nmaxcross), sumy, sumxy, p1, p2, p3
+      logical   swgrid, swcross
 c--
       integer*4 dattim(8), luntle, iyr_tle, doy, i, j, k, l, ihr, imn, i_year, i_month, i_day, i_pass, i_track, lunsat, nsatuse, ios, isat
-      integer*4 i_arg1, i_arg, ihr1, ihr2, imn1, imn2
+      integer*4 i_arg1, i_arg, ihr1, ihr2, imn1, imn2, ihr_ahead, lunhor, ih1, ih2, ih3, ih4
       integer*2 npos
-      logical foundtle, swdebug, swdiag, swlive, swallowflip, swnoovl, swboth, swoffset, swazrange, swelrange, swtiltcor, swsun, swcalib
-      character*5   c_zone
-      character*8   c_date, c_datvis
-      character*10  c_time
-      character*20  c_sat
-      character*50  c_file, c_command
-      character*69  tlestring
-      character*250 argstring, tledir, command
+      logical foundtle, swdebug, swdiag, swlive, swallowflip, swnoovl, swboth, swoffset, swazrange, swelrange, swtiltcor, swsun, swcalib, swazelalt, swhorcmd
+      logical swnoload, swfound
+      character*1    csq, cdq
+      character*3    c_month(12)
+      character*5    c_zone
+      character*8    c_date, c_datvis
+      character*10   c_time, c_horcmd, c_datehor1, c_datehor2
+      character*17   c_datehormatch
+      character*20   c_sat
+      character*50   c_file, c_command, cfmt, clong, clat
+      character*69   tlestring
+      character*250  argstring, tledir, command, chortxt
+      character*2000 horizons_command
+c
+      data c_month/'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'/
 c
 c-- Run the program as follows:
 c-- ./tletrack.exe \"AQUA\" resource beam=1.8 etc - TBD
@@ -74,6 +83,35 @@ c--     noovl     removes Az, El commands overlapping in time - hope this cures 
 c--     both      do the calculations with and without look-ahead - only useful with debug or diag
 c
 c-- The TLE environment variable defines where to find the TLE files
+c-- Test tiltcor
+c      do i = 1, 36
+c        eltst = 30.0
+c        aztst = dble(i-1)* 10.0D0
+c        call tilt_correct_cos(aztst, eltst)
+c        write (*,*) aztst, eltst
+c      enddo
+c      read (*,*)
+c-- Test tiltcor_rot - the complete version
+c      aztst = 115.0D0
+c      eltst = 30.0D0
+c      call tilt_correct_rot(aztst, eltst)
+c      write (*,*) aztst, eltst
+c      read (*,*)      
+c      aztst = 192.3D0
+c      eltst = 29.8D0
+c      call tilt_correct_rot(aztst, eltst)
+c      write (*,*) aztst, eltst
+c      read (*,*)      
+c-- WSL clock drift test
+c      call date_and_time(c_date, c_time, c_zone, dattim)
+c      i = dattim(7)
+c      do while (.true.)
+c        call date_and_time(c_date, c_time, c_zone, dattim)
+c        if (dattim(7).ne.i) then
+c          write (*,*) (dattim(k), k=5,8)
+c          i = dattim(7)
+c        endif
+c      enddo
 c
       torad           = 2.0D0 * dasin(1.0D0) / 180.0D0
       todeg           = 180.0D0 / (2.0D0 * dasin(1.0D0))
@@ -86,13 +124,20 @@ c-- Use 0.05 sec time steps (required for X-band)
       swlive          = .false.
       swallowflip     = .false.
       swnoovl         = .false.
-      azrate          = 4.5D0
-      elrate          = 5.2D0
+c-- Power setting for M1 (Az) and M2 (El) on SPID MD-0n controller.
+      azpower         = 100.0D0 / 100.0D0
+      elpower         =  70.0D0 / 100.0D0
+      azrate          = 4.5D0 * azpower
+      elrate          = 5.2D0 * elpower
+c-- ELRate @ 70% max power is 3.6 deg / sec - a tiny bit lower then expected - probably not significant.
       swboth          = .false.
       swoffset        = .false.
       azoff           = 0.0D0
       eloff           = 0.0D0
       swgrid          = .false.
+      swcross         = .false.
+      ncrossaz        = 0
+      ncrossel        = 0
       swazrange       = .false.
       swelrange       = .false.
       azrange(1)      =   0.0D0
@@ -104,8 +149,13 @@ c-- Use 0.05 sec time steps (required for X-band)
       elpark          = 0.0D0
       swsun           = .false.
       swcalib         = .false.
+      swazelalt       = .false.
+      swhorcmd        = .false.
+      swnoload        = .false.
 c-- If two satellites passes have a conflict and their priorities differ by 1 and their max elevations are above this limit : the max elevation wins
       elpriothresh    = 30.0D0
+      delta_t_la      = 0.0D0
+      ihr_ahead       = 24
 c
       do i = 1, nmaxpass
         sat_pass_start(i) = 0.0D0
@@ -120,6 +170,12 @@ c
       if (argstring(1:1).eq.'@') then
         if (argstring(2:4).eq.'sun') then
           swsun = .true.
+        else if (argstring(2:8).eq.'horcmd=') then
+          swhorcmd = .true.
+          do i = 1, len(c_horcmd)
+            c_horcmd(i:i) = ' '
+          enddo
+          c_horcmd   = argstring(9:lnblnk(argstring))
         else
           call get_lun(lunsat)
           open (unit=lunsat,file=argstring(2:lnblnk(argstring)),form='formatted')
@@ -191,6 +247,7 @@ c
           swoffset = .true.
         endif
         if (index(argstring(1:lnblnk(argstring)),'raster=').ne.0) then
+          if (swcross) stop '** raster= and cross= cannot be combined **'
           i = index(argstring,'=')
           j = index(argstring,',')
           call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_az)
@@ -218,6 +275,34 @@ c
           call string_to_r8(argstring(i+1:lnblnk(argstring))//' ',npos, grid_delta_t)
           write (*,'(7F10.2)') grid_az, grid_az_range, grid_az_step, grid_el, grid_el_range, grid_el_step, grid_delta_t
           swgrid = .true.
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'cross=').ne.0) then
+          if (swgrid) stop '** raster= and cross= cannot be combined **'
+          i = index(argstring,'=')
+          j = index(argstring,',')
+          call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_az)
+          i = j
+          if (index(argstring(j+1:),',').eq.0) stop '** Improper raster format **'
+          j = index(argstring(j+1:),',') + j
+          call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_el)
+          i = j
+          if (index(argstring(j+1:),',').eq.0) stop '** Improper raster format **'
+          j = index(argstring(j+1:),',') + j
+          call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_az_range)
+          i = j
+          if (index(argstring(j+1:),',').eq.0) stop '** Improper raster format **'
+          j = index(argstring(j+1:),',') + j
+          call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_el_range)
+          i = j
+          if (index(argstring(j+1:),',').eq.0) stop '** Improper raster format **'
+          j = index(argstring(j+1:),',') + j
+          call string_to_r8(argstring(i+1:j-1)//' ',npos, grid_az_step)
+          i = j
+          call string_to_r8(argstring(i+1:lnblnk(argstring))//' ',npos, grid_el_step)
+          write (*,'(6F10.2)') grid_az, grid_az_range, grid_az_step, grid_el, grid_el_range, grid_el_step
+          swcross = .true.
+          if (int(grid_az_range/grid_az_step)+1.gt.nmaxcross) stop '** Requested nr of Az cross steps exceeds maximum **'
+          if (int(grid_el_range/grid_el_step)+1.gt.nmaxcross) stop '** Requested nr of Az cross steps exceeds maximum **'
         endif
         if (index(argstring(1:lnblnk(argstring)),'azrange=').ne.0) then
           i = index(argstring,'=')
@@ -268,18 +353,154 @@ c
           write (*,'(''Modified Elevation Park Position         : '',F10.3)') elpark
         endif
         if (index(argstring(1:lnblnk(argstring)),'calib').ne.0)  swcalib = .true.
+        if (index(argstring(1:lnblnk(argstring)),'deltat=').ne.0) then
+          call string_to_r8(argstring(index(argstring,'deltat=')+7:lnblnk(argstring)), npos, delta_t_la)
+          write (*,'(''Delta Time for commands                  : '',F10.3)') delta_t_la
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'azelalt').ne.0) swazelalt = .true.
+        if (index(argstring(1:lnblnk(argstring)),'eltrackmin=').ne.0) then
+          call string_to_r8(argstring(index(argstring,'eltrackmin=')+11:lnblnk(argstring)), npos, el_track_min)
+          write (*,'(''Max Elevation of track has to be .gt.    : '',F10.3)') el_track_min
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'predict=').ne.0) then
+          call string_to_i4(argstring(index(argstring,'predict=')+8:lnblnk(argstring))//' ', npos, ihr_ahead)
+          write (*,'(''Modified predict window (hr)             : '',I10)') ihr_ahead
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'noload').ne.0) swnoload = .true.
       enddo
 c-- Check if dish alive and aligned - using visual inspection from my study :-)
       if (swlive) then
         call SPID_MD02(250.1D0, 0.0D0, swdebug, .false.)
         write (*,'(''If dish moved and aligned press enter :'')')
         read (*,*)
-        call SPID_MD02(azpark, elpark, swdebug, .false.)
+        call SPID_MD02(azpark + azoff, elpark + eloff, swdebug, .false.)
 c-- Wait for dish to return to the park position
         t_move = abs(250.1D0 - azpark)/azrate
         write (c_command,'(''sleep '',F8.1)') t_move
         call system(c_command)
         if (swcalib) call calibrate(azpark, elpark, azoff, eloff)
+      endif
+c-- Retrieve JPL Horizons Az/El if requested
+      if (swhorcmd) then
+        call date_and_time(c_date, c_time, c_zone, dattim)
+        call datetodoy(dattim(1), dattim(2), dattim(3), doy)
+        call doytodate(doy + 2, dattim(1), c_datvis)
+        c_datehor1 = c_date(1:4)//'-'//c_date(5:6)//'-'//c_date(7:8)
+        c_datehor2 = c_datvis(1:4)//'-'//c_datvis(5:6)//'-'//c_datvis(7:8) 
+        csq = char(ichar("'"))
+        cdq = char(ichar('"'))
+        if (.not.swnoload) then
+          horizons_command = 'https://ssd.jpl.nasa.gov/horizons_batch.cgi?batch=1&COMMAND='//csq//c_horcmd(1:lnblnk(c_horcmd))//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CENTER='//csq//'coord'//csq//'&'
+          call getenv ('LONG',clong)
+          call getenv ('LAT',clat)
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'SITE_COORD='//csq//clong(1:lnblnk(clong))//','//clat(1:lnblnk(clat))//',0.00'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'MAKE_EPHEM='//csq//'YES'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TABLE_TYPE='//csq//'OBS'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'STEP_SIZE='//csq//'1%20m'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CAL_FORMAT='//csq//'CAL'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TIME_DIGITS='//csq//'MINUTES'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'ANG_FORMAT='//csq//'HMS'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'OUT_UNITS='//csq//'KM-S'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'RANGE_UNITS='//csq//'KM'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'APPARENT='//csq//'AIRLESS'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'SOLAR_ELONG='//csq//'0,180'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'SUPPRESS_RANGE_RATE='//csq//'NO'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'SKIP_DAYLT='//csq//'NO'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'REF_SYSTEM='//csq//'J2000'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CSV_FORMAT='//csq//'YES'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'OBJ_DATA='//csq//'YES'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'QUANTITIES='//csq//'2,3,4,20'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'START_TIME='//csq//c_datehor1//'%2000:00'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'STOP_TIME='//csq//c_datehor2//'%2023:59'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'REF_PLANE='//csq//'ECLIPTIC'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'COORD_TYPE='//csq//'GEODETIC'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'AIRMASS='//csq//'38.0'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'EXTRA_PREC='//csq//'NO'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'ELM_LABELS='//csq//'YES'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TP_TYPE='//csq//'ABSOLUTE'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'R_T_S_ONLY='//csq//'NO'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CA_TABLE_TYPE='//csq//'STANDARD'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TCA3SG_LIMIT='//csq//'14400'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CALIM_SB='//csq//'0.1'//csq//'&'
+          write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CALIM_PL='//csq//'.1,.1,.1,.1,1.0,1.0,1.0,1.0,.1,.003'//csq
+          write (*,'(a)') '........ Querying JPL Horizons - Pls wait'
+          call system('curl -s -k '//cdq//horizons_command(1:lnblnk(horizons_command))//cdq//' -o tempeph.txt')
+          write (*,'(a)') 'Finished Querying JPL Horizons'
+        endif
+        call get_lun(lunhor)
+        open (unit=lunhor, file='tempeph.txt',form='formatted',access='sequential')
+        read (lunhor,'(a)') chortxt
+        read (lunhor,'(a)') chortxt
+        write (*,'(a)') chortxt(1:lnblnk(chortxt))
+        do while (index(chortxt,'$$SOE').eq.0)
+          read (lunhor,'(a)') chortxt
+        enddo
+c-- Read the actual data lines and crudely :-( isolate Az/El
+        call date_and_time(c_date, c_time, c_zone, dattim)
+        write (c_datehormatch,'(a4,''-'',a3,''-'',a2,1x,I2.2,'':'',I2.2)') c_date(1:4), c_month(dattim(2)), c_date(7:8), dattim(5) - (dattim(4)/60), dattim(6)
+        read (lunhor,'(a)') chortxt
+        swfound = .false.
+        do while (index(chortxt,'$$EOE').eq.0.and.(.not.swfound))
+          ih1 = index(chortxt,',')
+          ih2 = ih1 + 1
+          do i = 1,6
+            k = index(chortxt(ih2:),',')
+            ih2 = ih2 + k
+          enddo
+          ih3 = ih2
+          k = index(chortxt(ih3:),',')
+          ih3 = ih3 + k
+          ih4 = ih3
+          k = index(chortxt(ih4:),',')
+          ih4 = ih4 + k
+          if (index(chortxt(1:ih1-1),c_datehormatch).ne.0) then
+            swfound = .true.
+            call string_to_r8(chortxt(ih2:ih3-2), npos, azhor)
+            call string_to_r8(chortxt(ih3:ih4-2), npos, elhor)
+            if (azrange(1).le.azhor.and.azhor.le.azrange(2).and.elrange(1).le.elhor.and.elhor.le.elrange(2)) then
+              if (elhor.ge.el_track_min) write (*,'('' Time (UT), Az, El                            : '',a,2F10.3)') chortxt(1:ih1-1), azhor, elhor
+              if (swlive) then
+                call SPID_MD02(azhor, elhor, swdebug, .false.)
+              endif
+            endif
+          endif
+          read (lunhor,'(a)') chortxt
+        enddo
+c-- First entry found. Now loop over entries
+        do while (index(chortxt,'$$EOE').eq.0)
+ 11       call date_and_time(c_date, c_time, c_zone, dattim)
+          write (c_datehormatch,'(a4,''-'',a3,''-'',a2,1x,I2.2,'':'',I2.2)') c_date(1:4), c_month(dattim(2)), c_date(7:8), dattim(5) - (dattim(4)/60), dattim(6)
+          ih1 = index(chortxt,',')
+          ih2 = ih1 + 1
+          do i = 1,6
+            k = index(chortxt(ih2:),',')
+            ih2 = ih2 + k
+          enddo
+          ih3 = ih2
+          k = index(chortxt(ih3:),',')
+          ih3 = ih3 + k
+          ih4 = ih3
+          k = index(chortxt(ih4:),',')
+          ih4 = ih4 + k
+          if (index(chortxt(1:ih1-1),c_datehormatch).eq.0) then
+            call system('sleep 1.0')
+            goto 11
+          endif
+c-- Now decode Az/El and check constraints and if OK launch command
+          call string_to_r8(chortxt(ih2:ih3-2), npos, azhor)
+          call string_to_r8(chortxt(ih3:ih4-2), npos, elhor)
+          if (azrange(1).le.azhor.and.azhor.le.azrange(2).and.elrange(1).le.elhor.and.elhor.le.elrange(2)) then
+            if (elhor.ge.el_track_min) write (*,'('' Time (UT), Az, El                            : '',a,2F10.3)') chortxt(1:ih1-1), azhor, elhor
+            if (swlive) then
+              call SPID_MD02(azhor, elhor, swdebug, .false.)
+            endif
+          endif
+          read (lunhor,'(a)') chortxt
+        enddo
+        close (unit=lunhor)
+        call free_lun(lunhor)
+        read (*,*)
       endif
 c-- Track the sun if requested
       if (swsun) then
@@ -321,6 +542,7 @@ c          if (sunrepoint - (suntim2 - suntim1).gt.0.0D0) write (c_command,'(''s
           call system(c_command)
         enddo
       endif
+c-- Implement the grid option
       if (swgrid) then
         az1 = azpark
         el1 = elpark
@@ -349,6 +571,52 @@ c-- Send to rest position
         call SPID_MD02(azpark, elpark, swdebug, .false.)
         if (swcalib) call calibrate(azpark, elpark, azoff, eloff)
         stop '** End Grid **'
+      endif
+c-- Implement the cross option
+      if (swcross) then
+        k   = nint((grid_az_range/2.0D0)/grid_az_step)
+        l   = nint((grid_el_range/2.0D0)/grid_el_step)
+        el_cmd = grid_el
+        do i = -k, k
+          ncrossaz = ncrossaz + 1
+          az_cmd = grid_az + dble(i) * grid_az_step
+          write (*,'(''Az : '',F10.2,'' El : '',F10.2)') az_cmd, el_cmd
+          azx(ncrossaz) = sngl(az_cmd)
+          if (swlive) call SPID_MD02(az_cmd, el_cmd, swdebug, .false.)
+          write (*,'(''Enter response : '')')
+          read  (*,*) azresp(ncrossaz)
+        enddo
+        az_cmd = grid_az
+        do i = -l, l
+          ncrossel = ncrossel + 1
+          el_cmd   = grid_el + dble(i) * grid_el_step
+          write (*,'(''Az : '',F10.2,'' El : '',F10.2)') az_cmd, el_cmd
+          elx(ncrossel) = sngl(el_cmd)
+          if (swlive) call SPID_MD02(az_cmd, el_cmd, swdebug, .false.)
+          write (*,'(''Enter response : '')')
+          read  (*,*) elresp(ncrossel)
+        enddo
+c-- Calculate and send to peak position
+        write (c_command,'(''sleep '',F8.1)') 3.0
+        call system(c_command)
+c
+        call estimate_peak(azx, azresp, ncrossaz, p1, p2, p3)
+        az_cmd = p3
+        call estimate_peak(elx, elresp, ncrossel, p1, p2, p3)
+        el_cmd = p3
+c
+        write (*,'(''Azimuth   - Response'')')
+        do i = 1, ncrossaz
+          write (*,'(F10.2,3x,F10.2)') azx(i), azresp(i)
+        enddo
+        write (*,'(''Elevation - Response'')')
+        do i = 1, ncrossel
+          write (*,'(F10.2,3x,F10.2)') elx(i), elresp(i)
+        enddo
+        call SPID_MD02(az_cmd, el_cmd, swdebug, .false.)
+        write (*,'(''Peak system response at : '')')
+        write (*,'(''Az : '',F10.2,'' El : '',F10.2)') az_cmd, el_cmd
+        stop '** End Cross **'
       endif
 c
       write (*,'(''Satellites in use (name, type, priority) : '')')
@@ -395,7 +663,7 @@ c        call map_azel_init()
         time        = time_start
         time_offset = 0.0D0
         i_pass   = 0
-        do i = 1, 86400 * nint(secsubsteps)
+        do i = 1, ihr_ahead * 3600 * nint(secsubsteps)
           time = time + (1.0D0 / secsubsteps)
           if (time.gt.86400.0D0) then
             doy = doy + 1
@@ -403,7 +671,7 @@ c        call map_azel_init()
             time_offset = time_offset + 86400.0D0
           endif
           call run_TLE(time, doy, ro, vo, long, lat, theta0g, doy_tle, iyr_tle, dattim(1))
-          call azel(long, lat, ro, sat_az, sat_el)
+          call azel(long, lat, ro, sat_az, sat_el, swazelalt)
           if (sat_el.gt.0.0D0) then
             if (i_pass.eq.0) then
               i_pass                   = 1
@@ -430,9 +698,12 @@ c            call map_azel_place(sat_az, sat_el)
             sat_el_pass(npointspass(nrpasses), nrpasses) = sat_el
             time_pass  (npointspass(nrpasses), nrpasses) = time + dattim(4) * 60.0D0
 c          write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5)') sat_az, sat_el, c_datvis, ihr, imn, rsc, doy
+            if (swdebug.and.(time-dble(int(time))).lt.0.001D0) write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5, I6, 2F10.3)') sat_az, sat_el, c_datvis, ihr, imn, rsc, doy, npointspass(nrpasses), long, lat
           else
             if (i_pass.eq.1) then
               if (sat_pass_end(nrpasses).eq.0.0D0) sat_pass_end(nrpasses) = time  + time_offset + dattim(4) * 60.0D0
+c-- Try to eliminate the 0 second passes that creeped in after the change to the Az/El calculation. (Do not understand where they come from)
+              if (nint(dble(npointspass(nrpasses))/secsubsteps).eq.0) nrpasses = nrpasses - 1
             endif
             i_pass = 0
           endif
@@ -563,8 +834,16 @@ c-- Find the full angle point and store with the time of the half-angle point - 
           ihr = int(time_max/3600.0D0)
           imn = (int(time_max - dble(ihr)*3600.0D0)/60.0D0)
           rsc = time_max - dble(ihr)*3600.0D0 - imn * 60.0D0
+c-- Print and also try to eliminate the 0 second passes that creeped in after the change to the Az/El calculation. Do not understand where they come from)
           if (sat_el_max.gt.el_track_min) then
-            write (*,'(2i5,F10.3,2I5,F10.3,5x,A,I5)') i, nint(dble(npointspass(i))/secsubsteps), sat_el_max, ihr, imn, rsc, c_sat_use(isat)(2:lnblnk(c_sat_use(isat))-1), n_track_la(i)
+            k = lnblnk(c_sat_use(isat))
+            if (swdebug) then
+              write (cfmt,'(a,I2.2,a)') '(2i5,F10.3,2I5,F10.3,5x,A,',14-k,'x,I5,3F10.2)'
+              write (*,cfmt) i, nint(dble(npointspass(i))/secsubsteps), sat_el_max, ihr, imn, rsc, c_sat_use(isat)(2:lnblnk(c_sat_use(isat))-1), n_track_la(i), sat_pass_start(i), sat_pass_end(i), sat_pass_end(i) - sat_pass_start(i)
+            else
+              write (cfmt,'(a,I2.2,a)') '(2i5,F10.3,2I5,F10.3,5x,A,',14-k,'x,I5)'
+              write (*,cfmt) i, nint(dble(npointspass(i))/secsubsteps), sat_el_max, ihr, imn, rsc, c_sat_use(isat)(2:lnblnk(c_sat_use(isat))-1), n_track_la(i)
+            endif
           endif          
         enddo
       enddo
@@ -637,6 +916,7 @@ c-- If so apply priorities to eliminate conflicts and re-print a list of passes.
         j = i
         do while (j.lt.nrpasses)
           j = j + 1
+          if (ok(key(i)).eq.0) goto 4
           if (ok(key(j)).eq.0) goto 5
           if (sat_pass_start(j).gt.sat_pass_end(key(i))) goto 4
 c-- Identify conflicts - remember time_pass_start is time sorted !
@@ -648,7 +928,7 @@ c-- If equal priority ==> highest elevation wins                                
 c-- If priorities differ by 1 point, but elevation of both > 30 degrees ==> highest elevation wins     prio flag 3
 c-- If not the previous bullet  ==> the highest priority wins                                          prio flag 4
 c
-            if (swdebug) write (*,'(''Conflict between passes : '',4I5)')  i, j, key(i), key(j)
+            if (swdebug) write (*,'(''Conflict between passes : '',6I5)')  i, j, key(i), key(j), sat_pass_prio(key(i)), sat_pass_prio(key(j))
             if (sat_pass_prio(key(i)).eq.sat_pass_prio(key(j))) then
               if (sat_el_max_pass(key(i)).gt.sat_el_max_pass(key(j))) then
                 ok(key(j)) = 0
@@ -693,7 +973,7 @@ c      enddo
           ihr2 = int(mod(sat_pass_end(key(i)),86400.0D0) / 3600.0D0)
           imn2 =    (mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0)/60.0D0
           rsc2 =     mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0 - imn2 * 60.0D0
-          write (*,'(I4,F10.2,2(2I5,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, c_sat_pass(key(i))
+          write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
         endif
       enddo
 c-- The tracks have been sorted and conflicts settled - now implement the commanding as an option ?
@@ -713,7 +993,7 @@ c-- The tracks have been sorted and conflicts settled - now implement the comman
             imn2 =    (mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0)/60.0D0
             rsc2 =     mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0 - imn2 * 60.0D0
             write (*,'(I4,F10.2,2(2I5,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, c_sat_pass(key(i))
-            call azel_command(sat_pass_start(i), sat_pass_end(key(i)), time_track_la(1,key(i)), sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), n_track_la(key(i)), swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark)
+            call azel_command(sat_pass_start(i), sat_pass_end(key(i)), time_track_la(1,key(i)), sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), n_track_la(key(i)), swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la)
             if (swcalib) call calibrate(azpark, elpark, azoff, eloff)
           endif
         endif
@@ -753,14 +1033,17 @@ c
       return
       end
 
-      subroutine azel(long, lat, ro, az, el)
+      subroutine azel(long, lat, ro, az, el, swazelalt)
       implicit none
       real*8 long, lat, ro(3), az, el
+      logical swazelalt
 c
       real*8 xyz(3), lla(3), xyzsat(3), xyzobs(3), a(3), b(3), c1000, torad, todeg, a_par_b(3), a_ortho_b(3), const
       real*8 mylong, mylat
       integer*2 npos
       character*50 instring
+c-- Test variables - declare separately to be able to remove quickly
+      real*8 t_e, t_n, t_u, t_az, t_el, t_re
 c
       c1000           = 1000.0D0
       torad           = 2.0D0 * dasin(1.0D0) / 180.0D0
@@ -788,23 +1071,46 @@ c
       a(1) = xyzsat(1) - b(1)
       a(2) = xyzsat(2) - b(2)
       a(3) = xyzsat(3) - b(3)
-      el = 90.0D0 - todeg * dacos( (a(1)*b(1)+a(2)*b(2)+a(3)*b(3)) / (dsqrt(a(1)*a(1)+a(2)*a(2)+a(3)*a(3)) * dsqrt(b(1)*b(1)+b(2)*b(2)+b(3)*b(3)) ) )
-c
-      const = (a(1) * b(1) + a(2) * b(2) + a(3) * b(3)) / (b(1) * b(1) + b(2) * b(2) + b(3) * b(3))
-      a_par_b(1)   = const * b(1)
-      a_par_b(2)   = const * b(2)
-      a_par_b(3)   = const * b(3)
-      a_ortho_b(1) = a(1) - a_par_b(1)
-      a_ortho_b(2) = a(2) - a_par_b(2)
-      a_ortho_b(3) = a(3) - a_par_b(3)
-      a(1) = 0.0D0 - b(1)
-      a(2) = 0.0D0 - b(2)
-      a(3) = ( (b(1)*b(1) + b(2)*b(2) + b(3)*b(3)) / b(3)) - b(3)
-      b(1) = a_ortho_b(1)
-      b(2) = a_ortho_b(2)
-      b(3) = a_ortho_b(3)
-      az = todeg * dacos( (a(1)*b(1)+a(2)*b(2)+a(3)*b(3)) / (dsqrt(a(1)*a(1)+a(2)*a(2)+a(3)*a(3)) * dsqrt(b(1)*b(1)+b(2)*b(2)+b(3)*b(3)) ) )
-      if (long.lt.lla(1)*todeg) az = 360.0D0 - az
+c-- Code to test a different approach to getting Az, El from Soler et al - see d:\Tools\Documents\
+      if (.not.swazelalt) then
+        t_e = -1.0D0 * a(1) * sin(mylong * torad)                       + a(2) * cos(mylong * torad)
+        t_n = -1.0D0 * a(1) * sin(mylat  * torad) * cos(mylong * torad) - a(2) * sin(mylat  * torad) * sin(mylong * torad) + a(3) * cos(mylat * torad)
+        t_u =          a(1) * cos(mylat  * torad) * cos(mylong * torad) + a(2) * cos(mylat  * torad) * sin(mylong * torad) + a(3) * sin(mylat * torad)
+        t_az = todeg * atan(t_e / t_n)
+        t_el = todeg * atan(t_u / sqrt(t_e * t_e + t_n * t_n))
+c-- Atmospheric refraction correction - for 1010 hPa, 10 deg C and yellow light - is this valid for L- and X-band ????
+c-- Only execute the refraction correction for t_el > 0 !!
+        if (t_el.gt.0.0D0) then
+          t_re = 1.02D0 /tan(torad * (t_el + (10.3D0/(t_el + 5.11D0))))
+          t_re = t_re / 60.00D0
+          t_el = t_el + t_re
+        endif
+        if (t_n.le.0.0D0) t_az = 180.0D0 + t_az
+        if (t_n.gt.0.0D0) t_az = 360.0D0 + t_az
+        t_az = mod(t_az, 360.0D0)
+        az = t_az
+        el = t_el
+c--
+      else
+c-- My own approach to calculating Az/El - gives a slightly different result than the Soler et al - which is correct ?
+        el = 90.0D0 - todeg * dacos( (a(1)*b(1)+a(2)*b(2)+a(3)*b(3)) / (dsqrt(a(1)*a(1)+a(2)*a(2)+a(3)*a(3)) * dsqrt(b(1)*b(1)+b(2)*b(2)+b(3)*b(3)) ) )
+c-- Assuming the refraction correction is correct - also for X-band - you could also add it here ?
+        const = (a(1) * b(1) + a(2) * b(2) + a(3) * b(3)) / (b(1) * b(1) + b(2) * b(2) + b(3) * b(3))
+        a_par_b(1)   = const * b(1)
+        a_par_b(2)   = const * b(2)
+        a_par_b(3)   = const * b(3)
+        a_ortho_b(1) = a(1) - a_par_b(1)
+        a_ortho_b(2) = a(2) - a_par_b(2)
+        a_ortho_b(3) = a(3) - a_par_b(3)
+        a(1) = 0.0D0 - b(1)
+        a(2) = 0.0D0 - b(2)
+        a(3) = ( (b(1)*b(1) + b(2)*b(2) + b(3)*b(3)) / b(3)) - b(3)
+        b(1) = a_ortho_b(1)
+        b(2) = a_ortho_b(2)
+        b(3) = a_ortho_b(3)
+        az = todeg * dacos( (a(1)*b(1)+a(2)*b(2)+a(3)*b(3)) / (dsqrt(a(1)*a(1)+a(2)*a(2)+a(3)*a(3)) * dsqrt(b(1)*b(1)+b(2)*b(2)+b(3)*b(3)) ) )
+        if (long.lt.lla(1)*todeg) az = 360.0D0 - az
+      endif
 c
       return
       end
@@ -1267,10 +1573,10 @@ c
       return
       end
 
-      subroutine azel_command(pass_start, pass_end, time_track, sat_az_track, sat_el_track, n_in, swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark)
+      subroutine azel_command(pass_start, pass_end, time_track, sat_az_track, sat_el_track, n_in, swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la)
       implicit none
       integer*4 n_in
-      real*8    pass_start, pass_end, time_track(n_in), sat_az_track(n_in), sat_el_track(n_in), azrate, elrate, azoff, eloff, azpark, elpark
+      real*8    pass_start, pass_end, time_track(n_in), sat_az_track(n_in), sat_el_track(n_in), azrate, elrate, azoff, eloff, azpark, elpark, delta_t_la
       integer*1 ovlflag(n_in)
       logical   swdebug, swallowflip, swnoovl, swoffset
 c
@@ -1290,6 +1596,10 @@ c-- Apply offset if needed
           sat_el_track(j) = sat_el_track(j) + eloff
         enddo
       endif
+c-- Add delta_t_la (=0.0D0 unless set on command line with deltat=)
+      do j = 1, n
+        time_track(j) = time_track(j) - delta_t_la
+      enddo
 c-- Check if Flip mode required
       swflip = .false.
       do j = 1, n-1
@@ -1438,6 +1748,12 @@ c
       logical swazlim, swellim, swok, swtiltcor
       data swazlim/.false./, swellim/.false./, swtiltcor/.false./
 c
+      real*8    azstor, elstor
+      integer*4 dattim(8)
+      character*5   c_zone
+      character*8   c_date
+      character*10  c_time
+c
       save
 c
       if (init.eq.0) then
@@ -1460,15 +1776,26 @@ c-- Check Az/El range if requested
       if (swellim) then
         if (eluse.lt.ellow.or.eluse.gt.elhig) swok = .false.
       endif
-c-- Correct for system tilt - if requested
+c-- Trying to find the pointing error
+      azstor = Azuse
+      elstor = Eluse
+c-- Correct for system tilt - if requested - remember : If in flip mode I suspect this fails. Azuse is OK, but the sign of the tiltcor correction should be opposite ?
       if (swtiltcor) then
         Azcorr = Azuse
         Elcorr = Eluse
-        call tilt_correct(Azcorr, Elcorr)
+c        call tilt_correct(Azcorr, Elcorr)
+c        call tilt_correct_cos(Azcorr, Elcorr)
+        call tilt_correct_rot(Azcorr, Elcorr)
         Eluse = Elcorr
+        Azuse = Azcorr
+      endif
+c-- Trying to find the pointing error
+      if (swok) then
+        call date_and_time(c_date, c_time, c_zone, dattim)
+        if (swdebug) write (*,'(4I5,3(A,2F10.3))') (dattim(i), i=5,8), ' In : ', Az, El,' Used: ', azstor, elstor,' Tilt corrected : ', Azuse, Eluse
       endif
       if (.not.swok) goto 1
-      write (*,*) '==> OK'
+c      write (*,*) '==> OK'
 c--
       write (cangle,'(I4.4)') nint(5.0D0 * (Azuse + 360.0D0))
       devbuf( 1) = '57'x
@@ -1529,6 +1856,95 @@ c
           Elcorr = Elcorr - dble(fcor)
         endif
       enddo
+c
+      return
+      end
+
+      subroutine tilt_correct_cos(Azcorr, Elcorr)
+      implicit none
+      real*8 Azcorr, Elcorr
+c
+      real*8 torad
+c-- This is an anlytical model of the El variation over 360 deg Az (measured in 10 deg steps) of my set up. Better then 0.1 deg accurate.
+      torad           = 2.0D0 * dasin(1.0D0) / 180.0D0
+      Elcorr = Elcorr - (cos((azcorr - 295.0D0) * torad) * 1.17D0 + 0.175D0)
+      return
+      end
+
+      subroutine tilt_correct_rot(Azcorr, Elcorr)
+      implicit none
+      real*8 Azcorr, Elcorr
+c
+      real*4 Azcorr_r4, Elcorr_r4
+      real*4 nullvec(3), point_calc(3), point_rot(3), nullaz, nullel, torad, todeg, azrot, azoff, eloff, azcal, elcal
+c
+c
+      Azcorr_r4  = sngl(Azcorr)
+      Elcorr_r4  = sngl(Elcorr)
+      torad      = 2.0 * asin(1.0) / 180.0
+      todeg      = 180.0 / (2.0 * asin(1.0))
+c-- This is the Azimuth in between the two extremes of the measured inclinometer curve for El=0
+      nullaz     = 203.0
+      nullel     = 0.0
+      nullvec(1) = cos(nullel * torad) * cos (nullaz * torad)
+      nullvec(2) = cos(nullel * torad) * sin (nullaz * torad)
+      nullvec(3) = sin(nullel * torad)
+c-- Assume SYRACUSE 3B is used for calibration - fix later
+      point_calc(1) = cos(29.8 * torad) * cos (192.3 * torad)
+      point_calc(2) = cos(29.8 * torad) * sin (192.3 * torad)
+      point_calc(3) = sin(29.8 * torad)
+      call rotate_vector_a_around_b(point_calc, nullvec, 1.25, point_rot)
+      azrot = atan2(point_rot(2), point_rot(1)) * todeg
+      if (azrot.lt.0) azrot = azrot + 360.0
+      elcal = asin(point_rot(3)) * todeg - 29.8
+      azcal = azrot - 192.3
+c
+      point_calc(1) = cos(Elcorr_r4 * torad) * cos (Azcorr_r4 * torad)
+      point_calc(2) = cos(Elcorr_r4 * torad) * sin (Azcorr_r4 * torad)
+      point_calc(3) = sin(Elcorr_r4 * torad)
+      call rotate_vector_a_around_b(point_calc, nullvec, 1.25, point_rot)
+      azrot = atan2(point_rot(2), point_rot(1)) * todeg
+      if (azrot.lt.0) azrot = azrot + 360.0
+c      write (*,*) - ((azrot - Azcorr_r4) - azcal), - ((asin(point_rot(3)) * todeg - Elcorr_r4) - elcal)
+      Azcorr_r4 = Azcorr_r4 - ((azrot - Azcorr_r4) - azcal)
+      Elcorr_r4 = Elcorr_r4 - ((asin(point_rot(3)) * todeg - Elcorr_r4) - elcal)
+c
+      Azcorr = dble(Azcorr_r4)
+      Elcorr = dble(Elcorr_r4)
+c
+      return
+      end
+
+      subroutine rotate_vector_a_around_b(a, b, theta, c)
+      implicit none
+      real*4 a(3), b(3), c(3), theta, const, x1, x2
+c
+      real*4 a_par_b(3), a_ortho_b(3), a_ortho_b_theta(3), w(3)
+      real*4 torad, angle, rnorm_ortho
+c
+      torad = 2.0 * asin(1.0) / 180.0
+      angle = theta * torad
+c
+      const = (a(1) * b(1) + a(2) * b(2) + a(3) * b(3)) / (b(1) * b(1) + b(2) * b(2) + b(3) * b(3))
+      a_par_b(1)   = const * b(1)
+      a_par_b(2)   = const * b(2)
+      a_par_b(3)   = const * b(3)
+      a_ortho_b(1) = a(1) - a_par_b(1)
+      a_ortho_b(2) = a(2) - a_par_b(2)
+      a_ortho_b(3) = a(3) - a_par_b(3)
+      w(1)         = b(2) * a_ortho_b(3) - b(3) * a_ortho_b(2)
+      w(2)         = b(3) * a_ortho_b(1) - b(1) * a_ortho_b(3)
+      w(3)         = b(1) * a_ortho_b(2) - b(2) * a_ortho_b(1)
+      rnorm_ortho  = sqrt(a_ortho_b(1) * a_ortho_b(1) + a_ortho_b(2) * a_ortho_b(2) + a_ortho_b(3) * a_ortho_b(3))
+      x1           = cos(angle) / rnorm_ortho
+      x2           = sin(angle) / sqrt(w(1) * w(1) + w(2) * w(2) + w(3) * w(3))
+      a_ortho_b_theta(1) = rnorm_ortho * (x1 * a_ortho_b(1) + x2 * w(1))
+      a_ortho_b_theta(2) = rnorm_ortho * (x1 * a_ortho_b(2) + x2 * w(2))
+      a_ortho_b_theta(3) = rnorm_ortho * (x1 * a_ortho_b(3) + x2 * w(3))
+c
+      c(1)         = a_ortho_b_theta(1) + a_par_b(1)
+      c(2)         = a_ortho_b_theta(2) + a_par_b(2)
+      c(3)         = a_ortho_b_theta(3) + a_par_b(3)
 c
       return
       end
@@ -1691,35 +2107,83 @@ c
       write (*,'('' In this file the 3rd argument is the priority for a certain satellite. Used in de-conflicting'')')
       write (*,'('' '')')
       write (*,'('' A special use case is :'')')
-      write (*,'(''   ./tletrack.exe @sun beam=1.0'')')
+      write (*,'(''   ./tletrack.exe @sun beam=1.0 tiltcor'')')
       write (*,'('' which enables look ahead tracking of the sun'')')
+      write (*,'('' '')')
+      write (*,'('' A second special use case is :'')')
+      write (*,'(''   ./tletrack.exe @horcmd=499 beam=1.0 tiltcor'')')
+      write (*,'('' which enables look ahead tracking of the JPL HORIZONS objects (here Mars ; which has ID # 499)'')')
+      write (*,'('' NOTE 1 : Also see noload command below'')')
+      write (*,'('' NOTE 2 : At the moment it is a primitive implementation (without look ahead) that points to the object position every minute'')')
       write (*,'('' '')')
       write (*,'(''   Second argument is the type  of TLE : resource or weather IF the first argument is not an indirect ! '')')
       write (*,'(''                   NOT required if first argument is reference to indirect list (using @) '')')
       write (*,'('' '')')
       write (*,'(''   Further arguments:   '')')
       write (*,'('' '')')
-      write (*,'(''     beam=1.8  as beamwidth of dish to be used '')')
-      write (*,'(''     debug     show the commands that would be issued for reactive and pro-active (look ahead) '')')
-      write (*,'(''     diag      show the az el values at each time step for reactive and pro-active (look ahead) - L....o....n....g '')')
-      write (*,'(''     live      actually command the hardware '')')
-      write (*,'(''     flip      allow dish flip mode if crossing the N vector '')')
-      write (*,'(''     noovl     removes Az, El commands overlapping in time - hope this cures the MD-02 M2 pulse timeout problem ....... '')')
-      write (*,'(''     both      do the calculations with and without look-ahead - only useful with debug or diag '')')
+      write (*,'(''     beam=1.8        beamwidth of dish to be used (in deg)'')')
+      write (*,'(''     debug           show the commands that would be issued for reactive and pro-active (look ahead) '')')
+      write (*,'(''     diag            show the az el values at each time step for reactive and pro-active (look ahead) - L....o....n....g '')')
+      write (*,'(''     live            actually command the hardware '')')
+      write (*,'(''     flip            allow dish flip mode if crossing the N vector '')')
+      write (*,'(''     noovl           removes Az, El commands overlapping in time - hope this cures the MD-02 M2 pulse timeout problem ....... '')')
+      write (*,'(''     both            do the calculations with and without look-ahead - only useful with debug or diag '')')
       write (*,'('' '')')
       write (*,'(''     raster=200.5,28.3,3.0,2.0,0.4,0.3,10.0 parameters are Az, El, Az range, El range, Az step, El step, delta-T (sec) - perform a raster scan'')')
       write (*,'('' '')')
+      write (*,'('' '')')
+      write (*,'(''     cross=200.5,28.3,3.0,2.0,0.4,0.3 parameters are Az, El, Az range, El range, Az step, El step'')')
+      write (*,'(''                     This is to perform an Az/El antenna profile centroiding and asks for a signal strength after every pointing'')')
+      write (*,'(''                     then calculates the maximum Az/El response point and moves the antenna there'')')
+      write (*,'('' '')')
+      write (*,'(''     NOTE : The program terminates after a raster or a cross'')')
+      write (*,'('' '')')
       write (*,'(''     azrange=130-290 only allow commands with an Azimuth   in this range - used when running tests at the dish'')')
       write (*,'(''     elrange=0-45    only allow commands with an Elevation in this range - used when running tests at the dish'')')
-      write (*,'(''     tiltcor         enable the tilt correction measured with the level inclinometer at 30 deg intervals'')')
+      write (*,'(''     eltrackmin=8.0  limits the minimum elevation where tracking starts to a user defined value (here 8.0 deg - default is 3.0 deg)'')')
+      write (*,'(''     tiltcor         enable the tilt correction algorithm - rotation of the dish-object vector around a user defined vector by a user defined amount'')')
+      write (*,'(''                     this allows to compensate for not-perfect verticality of the center pole - which I unfortunately have'')')
       write (*,'(''     azpark=180.0    Override the default park position of Az=209.0'')')
       write (*,'(''     elpark=45.0     Override the default park position of El=0.0'')')
-      write (*,'(''     tiltcor   enable the tilt correction measured with the level inclinometer at 30 deg intervals'')')
       write (*,'(''     azoff=-1.0      Define an Az offset - found from pre-calibration - to add to the calculated values'')')
       write (*,'(''     eloff=0.9       Define an El offset - found from pre-calibration - to add to the calculated values'')')
-      write (*,'(''     calib     inserts an Az/El calibration routine - assumes you defined azpark, elpark, azoff and eloff !!'')')
+      write (*,'(''     calib           inserts an Az/El calibration routine - assumes you defined azpark, elpark, azoff and eloff !!'')')
+      write (*,'(''     azelalt         Enables my own Az/El calculation - which is slightly different - but likely incorrect.'')')
+      write (*,'(''     deltat=0.9      Defines an offset time which is added (!) to all calculatedcommanding times'')')
+      write (*,'(''     predict=8       Limits the prediction window to the user defined value (here 8) instead of 24. Ignored for using JPL HORIZONS'')')
+      write (*,'(''     noload          Do not reload the HORIZONS file - re-uses the existing tempeph.txt.'')')
       write (*,'('' '')')
       write (*,'('' The TLE environment variable defines where to find the TLE files '')')
+      write (*,'('' The LONG and LAT environment variables defined the geographic location of the dish (also used for JPL HORIZONS)'')')
 c
       return
       end
+
+      subroutine estimate_peak(x, resp, n, p1, p2, p3)
+      integer*4 n
+      real*4 x(n), resp(n), p1, p2, p3
+c
+      real*4 sum, sumy, sumxy, yval, x_a, y_a
+c
+      p2 = (resp(n) - resp(1)) / (x(n) - x(1))
+      p1 = resp(1) - p2 * x(1)
+      sum   = 0.
+      sumy  = 0.
+      sumxy = 0.
+      do i = 1, n
+        yval = resp(i) - (p1 + p2 * x(i))
+        sumy  = sumy  + yval
+        sumxy = sumxy + x(i) * yval
+      enddo
+      p3 = 0.
+      if (sumy.ne.0.) p3 = sumxy / sumy
+      do i = 1, n
+        yval = resp(i) - (p1 + p2 * x(i))
+        sum  = sum + yval * ((x(i)-p3)**2.)
+      enddo
+      p2 = 0.
+      if (sumy.gt.1.) p2 = sqrt(sum/(sumy-1.))
+      p1 = sumy
+      return
+      end
+

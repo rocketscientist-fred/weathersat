@@ -103,8 +103,9 @@ c
 c
 c-- I hate common blocks, but for the MODIS processing it avoids numerous arguments to subroutines.
 c
-      logical       swaqm1000, swaqm500, swaqm250, swaqmpan
-      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan
+      integer*4     modisband
+      logical       swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband
+      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband, modisband
 c
       call get_command(command)
       write (*,'(a)') command(1:lnblnk(command))
@@ -182,6 +183,8 @@ c-- Arguments from 3 onwards have no fixed order - set the initial values
       bowgamma        = 0.0
       swbowgamma      = .false.
       swterra         = .false.
+      swmodisband     = .false.
+      modisband       = 30
 c-- Check if modis !! In that case, 12 bit colours. Also check the modis resolution required.
       do i_arg = 3,30
         call getarg(i_arg, argstring)
@@ -505,6 +508,11 @@ c-- End of reading merge file
           ccorrect  = argstring(1:lnblnk(argstring))
           i = index(ccorrect,'=')
           call string_to_r4(ccorrect(i+1:lnblnk(ccorrect))//' ',npos, bcorrect)
+        endif
+        if (index (argstring,'modisband').ne.0.and.swaqm1000) then
+          swmodisband = .true.
+          i = index(argstring(1:lnblnk(argstring)),'=')
+          call string_to_i4(argstring(i+1:lnblnk(argstring))//' ',npos, modisband)
         endif
       enddo
       if ((swborder.or.swlonglat).and.swsharp) write (*,'(''W A R N I N G : border/longlat and sharpen together may give different colour values for these !!'')')
@@ -2541,14 +2549,18 @@ c
       character*2 cam1000(5), cam500(5), cam250(2)
       character*250 filename
 c
-      logical       swaqm1000, swaqm500, swaqm250, swaqmpan
-      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan
+      integer*4     modisband
+      logical       swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband
+      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband, modisband
 c
       data init/0/, initam/0/, cam1000/'08','09','20','21','22'/, cam500/'03','04','05','06','07'/, cam250/'01','02'/
       equivalence (buftim(1), amtim), (buftim(9), amdoy), (buftim(13), amtheta1), (buftim(21), amtheta2)
 c
       save
 c
+      if (swmodisband) then
+        write (cam1000(5),'(I2.2)') modisband
+      endif
       aqmtheta(1) = 0.0D0
       aqmtheta(2) = 0.0D0
       if (initam.eq.0.and.cmis.eq.'AM') then
@@ -2936,8 +2948,9 @@ c
       integer*4  i, j, timhist(864), i_tmax, v_tmax, i_min, i_max, ilinelast, doyhist(365), i_valid, irecval(3)
       real*8     delta_1, delta_2, timeval(3), lastvalid
 c
-      logical       swaqm1000, swaqm500, swaqm250, swaqmpan
-      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan
+      integer*4     modisband
+      logical       swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband
+      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband, modisband
 c
       delta = 0.1666666D0
 c-- For aqua we need a fix
@@ -3362,8 +3375,9 @@ c
       real*8 lastlongplus, lastlatplus, lastlongmin, lastlatmin, satalt, eta
       integer*4 ind_pix, ind_pix_save, isgn, nstep, nstep_save, i, j, init, i_mid
 c
-      logical       swaqm1000, swaqm500, swaqm250, swaqmpan
-      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan
+      integer*4     modisband
+      logical       swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband
+      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband, modisband
 c
       data init/0/
 c
@@ -3685,8 +3699,9 @@ c
       real*8 lastlongplus, lastlatplus, lastlongmin, lastlatmin, satalt, eta, thetastep
       integer*4 ind_pix, ind_pix_save, isgn, nstep, nstep_save, i, j, init, i_mid
 c
-      logical       swaqm1000, swaqm500, swaqm250, swaqmpan
-      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan
+      integer*4     modisband
+      logical       swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband
+      common /MODIS/swaqm1000, swaqm500, swaqm250, swaqmpan, swmodisband, modisband
 c
       data init/0/
 c
@@ -6761,6 +6776,17 @@ c
       write (*,'(a)') '  modispan      ==> Used with the merge option to create truecolour modis images from (hardcoded RGB = ch 1, 4, 3 - so a mix of 250 m and 500 m data)'
       write (*,'(a)') '                ==> Example : ./hrpt.exe panmodis.txt 221 gapcor project=121 gammargb=0.92,0.98,0.92 fast histcor binary merge modispan=correct'
       write (*,'(a)') '  gammargb=x,y,z => Used to specify separate gammas for R, G and B example - gammargb=0.92,0.98,0.92 - only applied to the projected or the border image - note : it changes (slightly) the border and longlat colours'
+      write (*,'(a)') '  bowgamma=     ==> Use : example bowgamma=1.8 - change the bowtie gamma correction - default=1.6 - only for the advanced'
+      write (*,'(a)') '  rcorrect=     ==> Use: example rcorrect=-0.1 - changes the R gamma from the center of scan to the edge by -0.1 - used for colour correction to counteract things like rayleigh scattering'
+      write (*,'(a)') '  gcorrect=     ==> Like rcorrect'
+      write (*,'(a)') '  bcorrect=     ==> Like rcorrect'
+      write (*,'(a)') ''
+      write (*,'(a)') '                AQUA MODIS example : ./hrpt.exe ./examples/1staqua.txt 221 gapcor project=121 gammargb=0.95,0.99,0.93 histcor modispan=correct fast binary merge linedelay=0 sharpen gamma=0.95 bcorrect=-0.1 rcorrect=0.0 gcorrect=-0.1'
+      write (*,'(a)') '                    with the texxtfile containing the same filename 3 times'
+      write (*,'(a)') ''
+      write (*,'(a)') '  modisband=    ==> Use: example modisband=30 if used with modis switch (gives 1 km data) it changes channel 5 of the pre-selected to the user specified value'
+      write (*,'(a)') '                    Like this : ./hrpt.exe /mnt/y/AQ_MODIS-2020-09-05-1257.bin 555 project=555 modis gapcor histcor binary fast sharpen border modisband=30'
+      write (*,'(a)') '                      results in B/W image of band 30 image (=modis offical band 28 as band 13 and 14 are double)'
       write (*,'(a)') ''
       write (*,'(a)') 'Inherited by other s/w'
       write (*,'(a)') '  bowtie=x.y,x.y ==> Passed on to readbin_modis.exe as part of the command string to set the bowtie correction parameters - default : bowtie=0.18,0.42 defined inside readbin_bowtie.f'

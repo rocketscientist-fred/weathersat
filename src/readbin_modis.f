@@ -924,13 +924,19 @@ c-- Create PNG's for band01 and band02
           enddo
 c-- Create a quick-and-dirty earth curvature corrected RGB=221 image here ?
           if (swpng) then
+c-- experimental bowtie correction
+            do i = 1, 2
+              write (cband,'(I2.2)') i
+              call bowtie_fix(outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-band'//cband//'.dat', 5416, 40)
+            enddo
+c-- end of bowtie correction
             do i = 1, 3
               call get_lun(lunband(i))
             enddo
             do i = 1, 2
               nrecl(i) = 5416
               write (cband,'(I2.2)') i
-              open (unit=lunband(i),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-band'//cband//'.dat', access='direct',form='unformatted',recl=nrecl(i)*2)
+              open (unit=lunband(i),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-band'//cband//'.dat.cor', access='direct',form='unformatted',recl=nrecl(i)*2)
             enddo
             call correct_init(710.0,110.0, 5416, index_correct, 10000, ncorrect_pix)
             open (unit=lunband(3),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221.rgb',form='unformatted', access='direct',recl=2*ncorrect_pix*6)
@@ -2132,5 +2138,213 @@ c
 c
       write (lun_correct,rec=irec) histrgb_correct
 c
+      return
+      end
+
+      subroutine bowtie_fix(filenm, nmaxpix, nlines)
+      implicit none
+      integer*4 nmaxpix, nlines
+      character*(*) filenm
+c
+      integer*4 nrscanlines
+      real*4, allocatable :: displace(:, :)
+c
+      if (.not.allocated(displace)) allocate(displace(nmaxpix, nlines))
+      call bowtie_displacement(displace, nmaxpix, nlines)
+      call bowtie_lines(filenm, nmaxpix, nrscanlines)
+      call bowtie_correct(filenm, displace, nmaxpix, nlines, nrscanlines)
+      if (allocated(displace)) deallocate(displace)
+      return
+      end
+      
+      subroutine bowtie_correct(filenm, displace, nmaxpix, nlines, nrscanlines)
+      implicit none
+      integer*4 nmaxpix, nlines, nrscanlines
+      real*4    displace(nmaxpix, nlines)
+      character*(*) filenm
+c
+      integer*4 lunin, lunout, i, j, k
+      real*4    w1, w2, d
+c
+      integer*2, allocatable :: inbuf(:)
+      integer*4, allocatable :: rawimg(: , :)
+      integer*4, allocatable :: corimg(: , :)
+      real*4,    allocatable :: pixcount(: , :)
+c
+      call get_lun(lunin)
+      if (.not.allocated(inbuf)) allocate(inbuf(nmaxpix))
+      open (unit=lunin,file=filenm, access='direct',form='unformatted', recl=nmaxpix*2)
+      if (.not.allocated(pixcount)) allocate(pixcount(nmaxpix, nrscanlines))
+      if (.not.allocated(rawimg))   allocate(rawimg(nmaxpix, nrscanlines))
+      if (.not.allocated(corimg))   allocate(corimg(nmaxpix, nrscanlines))
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          pixcount(i,j) = 0.0
+          rawimg(i,j)   = 0
+          corimg(i,j)   = 0
+        enddo
+      enddo
+      do i = 1, nrscanlines
+        read (lunin,rec=i) inbuf
+        do j = 1, nmaxpix
+          if (inbuf(j).lt.0) then
+            rawimg(j,i) = inbuf(j) + 65536
+          else
+            rawimg(j,i) = inbuf(j)
+          endif
+        enddo
+      enddo
+      close (unit=lunin)
+      call free_lun(lunin)
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          d = displace(i, nlines + 1 - (mod(j-1,nlines) + 1))
+          w1 = abs(d - int(d))
+          w2 = 1.0 - w1
+          k = j + int(d)
+          if (d.ge.0.0) then
+            k = k + 1
+            if (1.le.k.and.k.le.nrscanlines) then
+              corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
+              pixcount(i,k) = pixcount(i,k) + w1
+            endif
+            k = k - 1
+            if (1.le.k.and.k.le.nrscanlines) then
+              corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
+              pixcount(i,k) = pixcount(i,k) + w2
+            endif
+          else
+            k = k - 1
+            if (1.le.k.and.k.le.nrscanlines) then
+              corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
+              pixcount(i,k) = pixcount(i,k) + w1
+            endif
+            k = k + 1
+            if (1.le.k.and.k.le.nrscanlines) then
+              corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
+              pixcount(i,k) = pixcount(i,k) + w2
+            endif
+          endif
+        enddo
+      enddo
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          if (pixcount(i,j).ne.0.0) corimg(i,j) = nint(float(corimg(i,j)) / pixcount(i,j))
+c          if (pixcount(i,j).gt.0.2) corimg(i,j) = nint(float(corimg(i,j)) / pixcount(i,j))
+        enddo
+      enddo
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          if (pixcount(i,j).eq.0.0.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
+c          if (pixcount(i,j).le.0.2.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
+        enddo
+      enddo
+      call get_lun(lunout)
+      open (unit=lunout,file=filenm//'.cor', access='direct',form='unformatted', recl=nmaxpix*2)
+      do i = 1, nrscanlines
+        do j = 1, nmaxpix
+          if (0.le.corimg(j,i).and.corimg(i,j).le.32767) then
+            inbuf(j) = corimg(j,i)
+          else
+            inbuf(j) = corimg(j,i) - 65536
+          endif
+        enddo
+        write (lunout,rec=i) inbuf
+      enddo
+c
+      close (unit=lunout)
+      call free_lun(lunout)
+      if (allocated(inbuf)) deallocate(inbuf)
+      if (allocated(pixcount)) deallocate(pixcount)
+      if (allocated(rawimg))   deallocate(rawimg)
+      if (allocated(corimg))   deallocate(corimg)
+      return
+      end
+
+      subroutine bowtie_lines(filenm, nmaxpix, nrscanlines)
+      implicit none
+      integer*4 nmaxpix, nrscanlines
+      character*(*) filenm
+c
+      integer*4 lun, ios
+      integer*2, allocatable :: inbuf(:)
+c
+      call get_lun(lun)
+      if (.not.allocated(inbuf)) allocate(inbuf(nmaxpix))
+      open (unit=lun,file=filenm, access='direct',form='unformatted', recl=nmaxpix*2)
+      nrscanlines = 0
+      do while (.true.)
+        read (lun,rec=nrscanlines+1, iostat=ios) inbuf
+        if (ios.ne.0) goto 1
+        nrscanlines = nrscanlines + 1
+      enddo
+ 1    continue
+c
+      close (unit=lun)
+      call free_lun(lun)
+      if (allocated(inbuf)) deallocate(inbuf)
+      return
+      end
+
+      subroutine bowtie_displacement(displace, nmaxpix, nlines)
+      implicit none
+      integer*4 nmaxpix, nlines
+      real*4    displace(nmaxpix, nlines)
+c
+      integer*4 i, j, nsat_pix, i_arg
+      integer*2 npos
+      real*8 rpos, bowgamma, theta, theta1, theta2, torad, todeg, displace_y, theta_line_1, theta_line_2
+      character*250 argstring
+c
+      torad           = 2.0D0 * dasin(1.0D0) / 180.0D0
+      todeg           = 180.0D0 / (2.0D0 * dasin(1.0D0))
+c
+      bowgamma = 1.6D0
+      nsat_pix = nmaxpix
+      theta1   = 0.00D0
+      theta2   = 1.05D0
+c-- If need be override these parameters on the command line to allow finding optimum Bow-Tie parameters
+      do i_arg = 2, 10
+        call getarg(i_arg, argstring)
+        if (index(argstring(1:lnblnk(argstring)),'bowgamma=').ne.0) then
+          call string_to_r8(argstring(index(argstring,'bowgamma=')+9:lnblnk(argstring)), npos, bowgamma)
+          write (*,'(''Bow-gamma                                : '',F10.3)') bowgamma
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'theta1=').ne.0) then
+          call string_to_r8(argstring(index(argstring,'theta1=')+7:lnblnk(argstring)), npos, theta1)
+          write (*,'(''Theta1                                   : '',F10.3)') theta1
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'theta2=').ne.0) then
+          call string_to_r8(argstring(index(argstring,'theta2=')+7:lnblnk(argstring)), npos, theta2)
+          write (*,'(''Theta2                                   : '',F10.3)') theta2
+        endif
+      enddo
+c
+      do j = 0, nlines - 1
+        theta_line_1 = (theta1/2.0D0) - dble(j) * (theta1 / dble(nlines-1))
+        theta_line_2 = (theta2/2.0D0) - dble(j) * (theta2 / dble(nlines-1))
+c        write (*,*) j, theta_line_1, theta_line_2
+        displace_y = 0.0
+        do i = (nmaxpix / 2) - 1, 1, -1
+          rpos = abs((dble(2*i)/dble(nsat_pix)) - 1.0D0)
+          theta  = theta_line_1 + (theta_line_2 - theta_line_1) * (rpos ** (1.0D0/bowgamma))
+          displace_y = displace_y + sin(theta * torad)
+c          displace_y = sin(theta * torad) * float(abs(((nmaxpix/2)-i)))
+          displace(i, j + 1) = displace_y
+c          write (*,'(I5,2F10.3)') i, theta, displace
+        enddo
+        displace_y = 0.0
+        do i = (nmaxpix / 2), nmaxpix
+          rpos = abs((dble(2*i)/dble(nsat_pix)) - 1.0D0)
+          theta  = theta_line_1 + (theta_line_2 - theta_line_1) * (rpos ** (1.0D0/bowgamma))
+          displace_y = displace_y + sin(theta * torad)
+c          displace_y = sin(theta * torad) * float(abs(((nmaxpix/2)-i)))
+          displace(i, j + 1) = displace_y
+c          write (*,'(I5,2F10.3)') i, theta, displace
+        enddo
+      enddo
+c      do j = 1, nlines
+c        write (*,*) j, displace(1,j), displace(nmaxpix/2,j), displace(nmaxpix,j)
+c      enddo
       return
       end
