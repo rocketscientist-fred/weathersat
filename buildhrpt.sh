@@ -27,4 +27,6 @@ echo "gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mc
 gfortran -o readbin_modis.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/readbin_modis.f plotsoft.o
 echo "gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/polarstereo.f"
 gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/polarstereo.f
+echo "gfortran -o deproject.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/deproject.f plotsoft.o"
+gfortran -o deproject.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/deproject.f plotsoft.o
 rm *.o
