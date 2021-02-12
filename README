@@ -39,7 +39,7 @@ Use ./hrpt.exe --help for command line explanation - this is essential to do !
 
 To start:
 
-Extract this GITHUB repository in full.
+Extract this GITHUB repository in full to a directory named HRPT.
 
 Then get the Google drive file:
 
@@ -64,17 +64,11 @@ export MMODEL=LARGE
 export LAT=52.338989
 export LONG=4.709772
 
-set the MMODEL to MEDIUM if AQUA/Terra Modis processing is not required.
+set the MMODEL to MEDIUM if AQUA Modis processing is not required.
 adapt LONG and LAT to your position - the setting above puts you smack on top of a Schiphol runway
 for LONG - positive values are Eastern longitude
 
-For MODIS data hrpt.exe internally launches readbin_modis.exe with some parameters. You can also launch 
-readbin_modis.exe yourself for some quick per channel (and a 221=RGB composite aspect corrected 
-image) by:
-
-./readbin_modis.exe filename correct
-
-As the hrpt.exe software is TLE based it needs a TLE file. I download these daily from 
+As the software is TLE based it needs a TLE file. I download these daily from 
 the web site with a crontab script (you need to modify the local directories in here !) :
 
 #!/bin/bash
@@ -84,26 +78,27 @@ mv weather.txt $mytlefile
 mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-resource.tle
 wget http://www.celestrak.com/NORAD/elements/resource.txt
 mv resource.txt $mytlefile
+mytlefile=/share/Public/TLE/`(date +%Y%m%d)`-geo.tle
+wget http://www.celestrak.com/NORAD/elements/geo.txt
+mv geo.txt $mytlefile
 
-this creates a file like:
+this creates the files:
 
-20190306-weather.tle
+20210306-weather.tle
+20210306-resource.tle
+20210306-geo.tle
 
-and
-
-20190306-resource.tle
-
-my s/w uses the data from the filename to find the equivalent date TLE 
+my s/w uses the data from the HRPT filename to find the equivalent date TLE 
 file (and also tries 1 day earlier and later) in that directory.
 
 If you have set the TLE environment variable, this script could look like:
 
 #!/bin/bash
 mytlefile=$TLE`(date +%Y%m%d)`-weather.tle
-wget http://www.celestrak.com/NORAD/elements/weather.txt
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/weather.txt
 mv weather.txt $mytlefile
 mytlefile=$TLE`(date +%Y%m%d)`-resource.tle
-wget http://www.celestrak.com/NORAD/elements/resource.txt
+wget --secure-protocol=auto https://www.celestrak.com/NORAD/elements/resource.txt
 mv resource.txt $mytlefile
 
 
@@ -199,6 +194,50 @@ Finally, the s/w is reasonably fast (a few minutes per HRPT file), but an AQUA M
 true colour with the modispan option easily takes 45 minutes and if you add sharpen, 
 add another hour (but its worth it !!)
 
+
+
+TLETRACK Software:
+
+The tletrack.exe is a dedicated program that allows using the ROT2PROG protocol through 
+a comport (default COM4 if you need a different one in the s/w search for ttyS4 , replace 
+the 4 with the COM port number you need and rebuild). It is specific for the MD-02 
+controller of a SPID RAS/HR or a SPID BIG-RAS/HR rotor.
+
+./tletrack --help 
+
+will show the help text on how to use the software. It also allows to use JPL Horizons 
+based tracking (with the simplification that it uses 1 minute tracking intervals, 
+but for a dish say up to 2-3 m this is OK). If you use the JPL Horizons based tracking 
+the lookahead feature currently is not useable.
+
+
+
+DEPROJECT Software:
+
+The deproject software allows to coordinate a raw RGB image (png or jpg) for Earth 
+curvature AND - for AQUA and TERRA MODIS and FY3B MERSI-1 and FY3D MERSI-2 to 
+perform the Bow-Tie (approximate but pretty good) correction.
+
+./deproject --help
+
+will show the help text on how to use the s/w. An example of correcting an AQUA 
+MODIS image is:
+
+./deproject.exe /mnt/y/Test/MODIS-RGB-121.png alt=708.4 fov=110.0 bowtie=mersi1 bowgamma=1.6 theta1=0.0 theta2=1.05
+
+yes, I know the bowtie=mersi1 here looks silly, but it enables the bowtie algorithm 
+and the 3 parameters that follow set it to the AQUA/TERRA MODIS values.
+For FY3B and 3D you can remove these 3 parameters and use the default.
+
+NOTE: The s/w is tested and validated on both FY and MODIS high resolution channel 
+RGB (!) images whose # of image lines is (and HAS TO BE) an integer multiple of 
+40 lines. It should in principle also work for medium res and low res images IF you 
+add the relevant parameter (see the help text).
+If you just wish to use the earth curvature correction the 40 lines multiple requirement 
+does not apply.
+
+
+
 TROUBLESHOOTING : 
 
 In case of imagemagick complaints about limits being exceeded:
@@ -217,13 +256,33 @@ and check the constraints. I now use in WSL :
   This also helped me to significantly speed up the sharpen process !
   
 Currently the s/w runs best in WSL (Windows Subsystem for Linux) :-(
+
 It allows you to generate ELF exe files, which you need for memory space and cygwin 
 won't allow. Limitation is that it only mounts NTFS HD's and USB devices, NOT a NAS !
 
+It works both in WSL1 and WSL2. WSL2 is much faster in execution time then WSL1.
+If you intend to use the tletrack s/w, then once you start a session do:
+
+sudo ntpdate time.microsoft.com 
+
+a few times. This is needed to syncronise the unix clock, which in WSL2 (due to 
+hypervirtualisation) can be substantially off from the windows clock.
+Currently (Jan 2021) WSL2 and Virtualbox VM's can't run simultaneously. In a 
+admin command shell you do:
+
+bcdedit /SET hypervisorlaunchtype off
+
+and reboot, to enable virtualbox VM's. And you do:
+
+bcdedit /SET hypervisorlaunchtype auto
+
+and reboot, to enable WSL2 again.
+
+With some effort in WSL2 it is possible to NFS mount a NAS.
+
 It also runs fine on UBUNTU as an ORACLE Virtualbox VM, but slower.
 
-Install of WSL1 (if you already have WSL1 but want to migrate to WSL2 (much faster) see below) :
-
+Install:
 - In windows 10 search for "feature"  or "turn windows features" and start "turn windows features on or off"
 - Scroll to Windows Subsystem for Linux and enable it, then OK etc etc
 - Go to : https://www.microsoft.com/nl-nl/p/ubuntu-1804-lts/9n9tngvndl3q?rtc=1&activetab=pivot:overviewtab
@@ -242,21 +301,6 @@ Install of WSL1 (if you already have WSL1 but want to migrate to WSL2 (much fast
 - chmod 744 buildhrpt.sh
 - ./buildhrpt.sh
 - ./hrpt.exe --help
-
-Install of WSL2:
-- Follow the logic/instructions at: https://docs.microsoft.com/en-us/windows/wsl/install-win10
-
-NOTE : With the introduction of WSL2 I found that the system NO LONGER is compatible with Virtualbox.
-You can get virtualbox to work again by issuing the command (in an admin shell):
-
-bcdedit /SET hypervisorlaunchtype off
-
-and reboot windows 10. NOW WSL2 is not working but virtualbox is. To switch back:
-
-bcdedit /SET hypervisorlaunchtype auto
-
-and reboot windows10.
-
 
 Go to the top end try setting the environment variables and run an example
 
