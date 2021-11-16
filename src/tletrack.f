@@ -20,9 +20,9 @@ c-- Diagnostic variables - can be deleted if plots no longer needed
       real*8    angle1, angle2, azpark, elpark, aztst, eltst
 c
       real*8    doy_tle, time, ro(3), vo(3), long, lat, theta0g, time_start, sat_az, sat_el, rsc, sat_el_max, time_max, el_track_min
-      real*8    torad, todeg, track_angle, x1, y1, z1, x2, y2, z2, time_save, secsubsteps, time_offset, rsc1, rsc2, elpriothresh
+      real*8    torad, todeg, track_angle, x1, y1, z1, x2, y2, z2, time_save, secsubsteps, time_offset, rsc1, rsc2, rsc3, rsc4, elpriothresh
       real*8    azrate, elrate, azoff, eloff, azrange(2), elrange(2), sunaz, sunel, sunaz1, sunel1, sunaz2, sunel2, anglesun, sunrate
-      real*8    suntim1, suntim2, sunrepoint, sunahead, elpower, azpower, delta_t_la, azhor, elhor
+      real*8    suntim1, suntim2, sunrepoint, sunahead, elpower, azpower, delta_t_la, azhor, elhor, azpoint, elpoint
 c-- Raster variables
       real*8    grid_az, grid_el, grid_az_range, grid_el_range, grid_az_step, grid_el_step, grid_delta_t, az_cmd, el_cmd, t_move, az1, el1, azavg, elavg
       integer*4 ncrossaz, ncrossel
@@ -30,15 +30,15 @@ c-- Raster variables
       logical   swgrid, swcross
 c--
       integer*4 dattim(8), luntle, iyr_tle, doy, i, j, k, l, ihr, imn, i_year, i_month, i_day, i_pass, i_track, lunsat, nsatuse, ios, isat
-      integer*4 i_arg1, i_arg, ihr1, ihr2, imn1, imn2, ihr_ahead, lunhor, ih1, ih2, ih3, ih4
+      integer*4 i_arg1, i_arg, ihr1, ihr2, ihr3, ihr4, imn1, imn2, imn3, imn4, ihr_ahead, lunhor, ih1, ih2, ih3, ih4, i_mask1, i_mask2
       integer*2 npos
       logical foundtle, swdebug, swdiag, swlive, swallowflip, swnoovl, swboth, swoffset, swazrange, swelrange, swtiltcor, swsun, swcalib, swazelalt, swhorcmd
-      logical swnoload, swfound
+      logical swnoload, swfound, swpoint, swdoublec, swjumpin, swhmask, check_horizon
       character*1    csq, cdq
       character*3    c_month(12)
       character*5    c_zone
       character*8    c_date, c_datvis
-      character*10   c_time, c_horcmd, c_datehor1, c_datehor2
+      character*10   c_time, c_horcmd, c_datehor1, c_datehor2, c_time1, c_time2
       character*17   c_datehormatch
       character*20   c_sat
       character*50   c_file, c_command, cfmt, clong, clat
@@ -152,6 +152,10 @@ c-- ELRate @ 70% max power is 3.6 deg / sec - a tiny bit lower then expected - p
       swazelalt       = .false.
       swhorcmd        = .false.
       swnoload        = .false.
+      swpoint         = .false.
+      swdoublec       = .false.
+      swjumpin        = .false.
+      swhmask         = .false.
 c-- If two satellites passes have a conflict and their priorities differ by 1 and their max elevations are above this limit : the max elevation wins
       elpriothresh    = 30.0D0
       delta_t_la      = 0.0D0
@@ -224,7 +228,7 @@ c
         i_sat_prio(nsatuse) = 9
         i_arg1 = 3
       endif
-      do k = i_arg1, 20
+      do k = i_arg1, 30
         call getarg(k, argstring)
         if (index(argstring(1:lnblnk(argstring)),'debug').ne.0)  swdebug      = .true.
         if (index(argstring(1:lnblnk(argstring)),'diag').ne.0)   swdiag       = .true.
@@ -367,12 +371,42 @@ c
           write (*,'(''Modified predict window (hr)             : '',I10)') ihr_ahead
         endif
         if (index(argstring(1:lnblnk(argstring)),'noload').ne.0) swnoload = .true.
+        if (index(argstring(1:lnblnk(argstring)),'point=').ne.0) then
+          i = index(argstring,'=')
+          j = index(argstring,',')
+          if (j.eq.0) then
+            stop '** Format error in point= command, example: point=192.3,29.7 **'
+          else
+            swpoint = .true.
+            i = index(argstring,'=')
+            call string_to_r8(argstring(i+1:j-1)//' ',npos, azpoint)
+            i = j
+            j = lnblnk(argstring)
+            call string_to_r8(argstring(i+1:j)//' '  ,npos, elpoint)
+          endif
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'doublec').ne.0) swdoublec = .true.
+        if (index(argstring(1:lnblnk(argstring)),'jumpin').ne.0) swjumpin = .true.
+        if (index(argstring(1:lnblnk(argstring)),'hmask').ne.0) swhmask = .true.
       enddo
+c-- Just execute a simple point and stare and exit
+      if (swpoint) then
+        write (*,'(''Az pointing to                           : '',F10.3)') azpoint
+        write (*,'(''El pointing to                           : '',F10.3)') elpoint
+        if (swlive) call SPID_MD02(azpoint, elpoint, swdebug, .false.)
+        if (swlive.and.swdoublec) then
+          write (c_command,'(''sleep '',F8.1)') 1.0
+          call system(c_command)
+          call SPID_MD02(azpoint, elpoint, swdebug, .false.)
+        endif
+        stop '** Pointing completed **'
+      endif
 c-- Check if dish alive and aligned - using visual inspection from my study :-)
+c-- Remove this as it is not really used
       if (swlive) then
-        call SPID_MD02(250.1D0, 0.0D0, swdebug, .false.)
-        write (*,'(''If dish moved and aligned press enter :'')')
-        read (*,*)
+c        call SPID_MD02(250.1D0, 0.0D0, swdebug, .false.)
+c        write (*,'(''If dish moved and aligned press enter :'')')
+c        read (*,*)
         call SPID_MD02(azpark + azoff, elpark + eloff, swdebug, .false.)
 c-- Wait for dish to return to the park position
         t_move = abs(250.1D0 - azpark)/azrate
@@ -397,6 +431,7 @@ c-- Retrieve JPL Horizons Az/El if requested
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'SITE_COORD='//csq//clong(1:lnblnk(clong))//','//clat(1:lnblnk(clat))//',0.00'//csq//'&'
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'MAKE_EPHEM='//csq//'YES'//csq//'&'
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TABLE_TYPE='//csq//'OBS'//csq//'&'
+c-- Remember, half the step size is used some 76 lines down for an offset calc !!!
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'STEP_SIZE='//csq//'1%20m'//csq//'&'
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'CAL_FORMAT='//csq//'CAL'//csq//'&'
           write (horizons_command(lnblnk(horizons_command)+1:),'(a)') 'TIME_DIGITS='//csq//'MINUTES'//csq//'&'
@@ -461,7 +496,7 @@ c-- Read the actual data lines and crudely :-( isolate Az/El
             if (azrange(1).le.azhor.and.azhor.le.azrange(2).and.elrange(1).le.elhor.and.elhor.le.elrange(2)) then
               if (elhor.ge.el_track_min) write (*,'('' Time (UT), Az, El                            : '',a,2F10.3)') chortxt(1:ih1-1), azhor, elhor
               if (swlive) then
-                call SPID_MD02(azhor, elhor, swdebug, .false.)
+                call SPID_MD02(azhor + azoff, elhor + eloff, swdebug, .false.)
               endif
             endif
           endif
@@ -470,6 +505,9 @@ c-- Read the actual data lines and crudely :-( isolate Az/El
 c-- First entry found. Now loop over entries
         do while (index(chortxt,'$$EOE').eq.0)
  11       call date_and_time(c_date, c_time, c_zone, dattim)
+c-- Modify the system time half a STEP_SIZE into the future to execute the commands 30 seconds early - achieves look ahead - fails accross a leap second :-))
+c-- A fool proof method would be to convert time to Julian date add/subtract the offset and convert back again. This would be robust against leap seconds
+          call offset_time(dattim, 30)
           write (c_datehormatch,'(a4,''-'',a3,''-'',a2,1x,I2.2,'':'',I2.2)') c_date(1:4), c_month(dattim(2)), c_date(7:8), dattim(5) - (dattim(4)/60), dattim(6)
           ih1 = index(chortxt,',')
           ih2 = ih1 + 1
@@ -493,7 +531,12 @@ c-- Now decode Az/El and check constraints and if OK launch command
           if (azrange(1).le.azhor.and.azhor.le.azrange(2).and.elrange(1).le.elhor.and.elhor.le.elrange(2)) then
             if (elhor.ge.el_track_min) write (*,'('' Time (UT), Az, El                            : '',a,2F10.3)') chortxt(1:ih1-1), azhor, elhor
             if (swlive) then
-              call SPID_MD02(azhor, elhor, swdebug, .false.)
+              call SPID_MD02(azhor + azoff, elhor + eloff, swdebug, .false.)
+              if (swdoublec) then
+                write (c_command,'(''sleep '',F8.1)') 1.0
+                call system(c_command)
+                call SPID_MD02(azhor + azoff, elhor + eloff, swdebug, .false.)
+              endif
             endif
           endif
           read (lunhor,'(a)') chortxt
@@ -973,7 +1016,33 @@ c      enddo
           ihr2 = int(mod(sat_pass_end(key(i)),86400.0D0) / 3600.0D0)
           imn2 =    (mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0)/60.0D0
           rsc2 =     mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0 - imn2 * 60.0D0
-          write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
+          if (swhmask) then
+            i_mask1 = -1
+            i_mask2 = -1
+            do j = 1, n_track_la(key(i))
+c              write (*,*) key(i), j, sat_az_track(j, key(i)), sat_el_track(j, key(i))
+c              read (*,*)
+              if (check_horizon(sat_az_track_la(j, key(i)), sat_el_track_la(j, key(i))).and.i_mask1.lt.0) i_mask1 = j
+            enddo
+            do j = n_track_la(key(i)), 1, -1
+              if (check_horizon(sat_az_track_la(j, key(i)), sat_el_track_la(j, key(i))).and.i_mask2.lt.0) i_mask2 = j
+            enddo
+            if (i_mask1.eq.-1.or.i_mask2.eq.-1) then
+              write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' No El commands above Horizon mask - skipping pass'')') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
+            else
+              ihr3 = int(mod(time_track_la(max(i_mask1-1,1)                 , key(i)),86400.0D0) / 3600.0D0)
+              imn3 =    (mod(time_track_la(max(i_mask1-1,1)                 , key(i)),86400.0D0) - dble(ihr3)*3600.0D0)/60.0D0
+              rsc3 =     mod(time_track_la(max(i_mask1-1,1)                 , key(i)),86400.0D0) - dble(ihr3)*3600.0D0 - imn3 * 60.0D0
+              ihr4 = int(mod(time_track_la(min(i_mask2+1,n_track_la(key(i))), key(i)),86400.0D0) / 3600.0D0)
+              imn4 =    (mod(time_track_la(min(i_mask2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr4)*3600.0D0)/60.0D0
+              rsc4 =     mod(time_track_la(min(i_mask2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr4)*3600.0D0 - imn4 * 60.0D0
+              write (c_time1,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr3, imn3, rsc3
+              write (c_time2,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr4, imn4, rsc4
+              write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' Visible from : '',a,'' To : '',a)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i)), c_time1, c_time2
+            endif
+          else
+            write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
+          endif
         endif
       enddo
 c-- The tracks have been sorted and conflicts settled - now implement the commanding as an option ?
@@ -993,7 +1062,7 @@ c-- The tracks have been sorted and conflicts settled - now implement the comman
             imn2 =    (mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0)/60.0D0
             rsc2 =     mod(sat_pass_end(key(i)),86400.0D0) - dble(ihr2)*3600.0D0 - imn2 * 60.0D0
             write (*,'(I4,F10.2,2(2I5,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, c_sat_pass(key(i))
-            call azel_command(sat_pass_start(i), sat_pass_end(key(i)), time_track_la(1,key(i)), sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), n_track_la(key(i)), swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la)
+            call azel_command(sat_pass_start(i), sat_pass_end(key(i)), time_track_la(1,key(i)), sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), n_track_la(key(i)), swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la, swjumpin, swhmask)
             if (swcalib) call calibrate(azpark, elpark, azoff, eloff)
           endif
         endif
@@ -1299,6 +1368,209 @@ c
       return
       end
 
+      subroutine offset_time(dattim, isec_off_in)
+      integer*4 dattim(8), isec_off_in
+c-- Offset the system time array by a fixed amount in the range between -86399 and +86399 seconds
+      integer*4 ihr_off, imn_off, monthdays(12), isec_off
+c
+      data monthdays/31,0,31,30,31,30,31,31,30,31,30,31/
+c
+      save
+c
+      isec_off = isec_off_in
+      if (isec_off.lt.0) goto 2
+      if (isec_off.ge.3600) then
+        ihr_off  = isec_off / 3600
+        isec_off = mod(isec_off, 3600)
+        if (ihr_off.ge.24) stop 'subroutine offset_time: offsets >= 86400 seconds not supported'
+        dattim(5) = dattim(5) + ihr_off
+        if (dattim(5).ge.24) then
+          dattim(5) = mod(dattim(5), 24)
+          if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+            monthdays(2) = 29
+          else
+            monthdays(2) = 28
+          endif
+          dattim(3) = dattim(3) + 1
+          if (dattim(3).gt.monthdays(dattim(2))) then
+            dattim(3) = mod(dattim(3),monthdays(dattim(2)))
+            dattim(2) = dattim(2) + 1
+            if (dattim(2).gt.12) then
+              dattim(2) = mod(dattim(2),12)
+              dattim(1) = dattim(1) + 1
+              if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                monthdays(2) = 29
+              else
+                monthdays(2) = 28
+              endif
+            endif
+          endif
+        endif
+      endif
+      if (isec_off.ge.60) then
+        imn_off = isec_off / 60
+        isec_off = mod(isec_off, 60)
+        dattim(6) = dattim(6) + imn_off
+        if (dattim(6).ge.60) then
+          dattim(6) = mod(dattim(6), 60)
+          dattim(5) = dattim(5) + 1
+          if (dattim(5).ge.24) then
+            dattim(5) = mod(dattim(5), 24)
+            if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+              monthdays(2) = 29
+            else
+              monthdays(2) = 28
+            endif
+            dattim(3) = dattim(3) + 1
+            if (dattim(3).gt.monthdays(dattim(2))) then
+              dattim(3) = mod(dattim(3),monthdays(dattim(2)))
+              dattim(2) = dattim(2) + 1
+              if (dattim(2).gt.12) then
+                dattim(2) = mod(dattim(2),12)
+                dattim(1) = dattim(1) + 1
+                if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                  monthdays(2) = 29
+                else
+                  monthdays(2) = 28
+                endif
+              endif
+            endif
+          endif
+        endif
+      endif
+      dattim(7) = dattim(7) + isec_off
+      if (dattim(7).ge.60) then
+        dattim(7) = mod(dattim(7), 60)
+        dattim(6) = dattim(6) + 1
+        if (dattim(6).ge.60) then
+          dattim(6) = mod(dattim(6), 60)
+          dattim(5) = dattim(5) + 1
+          if (dattim(5).ge.24) then
+            dattim(5) = mod(dattim(5), 24)
+            if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+              monthdays(2) = 29
+            else
+              monthdays(2) = 28
+            endif
+            dattim(3) = dattim(3) + 1
+            if (dattim(3).gt.monthdays(dattim(2))) then
+              dattim(3) = mod(dattim(3),monthdays(dattim(2)))
+              dattim(2) = dattim(2) + 1
+              if (dattim(2).gt.12) then
+                dattim(2) = mod(dattim(2),12)
+                dattim(1) = dattim(1) + 1
+                if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                  monthdays(2) = 29
+                else
+                  monthdays(2) = 28
+                endif
+              endif
+            endif
+          endif
+        endif
+      endif
+      goto 3
+c-- In a cowards way, I deal with negative offsets in a separate way
+ 2    isec_off = abs(isec_off)
+      if (isec_off.ge.3600) then
+        ihr_off  = isec_off / 3600
+        isec_off = mod(isec_off, 3600)
+        if (ihr_off.ge.24) stop 'subroutine offset_time: offsets >= 86400 seconds not supported'
+        dattim(5) = dattim(5) - ihr_off
+        if (dattim(5).lt.0) then
+          dattim(5) = dattim(5) + 24
+          if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+            monthdays(2) = 29
+          else
+            monthdays(2) = 28
+          endif
+          dattim(3) = dattim(3) - 1
+          if (dattim(3).le.0) then
+            dattim(2) = dattim(2) - 1
+            if (dattim(2).le.0) then
+              dattim(2) = dattim(2) + 12
+              dattim(3) = dattim(3) + monthdays(dattim(2))
+              dattim(1) = dattim(1) - 1
+              if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                monthdays(2) = 29
+              else
+                monthdays(2) = 28
+              endif
+            else
+              dattim(3) = dattim(3) + monthdays(dattim(2))
+            endif
+          endif
+        endif
+      endif
+      if (isec_off.ge.60) then
+        imn_off = isec_off / 60
+        isec_off = mod(isec_off, 60)
+        dattim(6) = dattim(6) - imn_off
+        if (dattim(6).lt.0) then
+          dattim(6) = dattim(6) + 60
+          dattim(5) = dattim(5) - 1
+          if (dattim(5).lt.0) then
+            dattim(5) = dattim(5) + 24
+            if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+              monthdays(2) = 29
+            else
+              monthdays(2) = 28
+            endif
+            dattim(3) = dattim(3) - 1
+            if (dattim(3).le.0) then
+              dattim(2) = dattim(2) - 1
+              if (dattim(2).le.0) then
+                dattim(2) = dattim(2) + 12
+                dattim(3) = dattim(3) + monthdays(dattim(2))
+                dattim(1) = dattim(1) - 1
+                if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                  monthdays(2) = 29
+                else
+                  monthdays(2) = 28
+                endif
+              else
+                dattim(3) = dattim(3) + monthdays(dattim(2))
+              endif
+            endif
+          endif          
+        endif
+      endif
+      dattim(7) = dattim(7) - isec_off
+      if (dattim(7).lt.0) then
+        dattim(7) = dattim(7) + 60
+        dattim(6) = dattim(6) - 1
+        if (dattim(6).lt.0) then
+          dattim(6) = dattim(6) + 60
+          dattim(5) = dattim(5) - 1
+          if (dattim(5).lt.0) then
+            dattim(5) = dattim(5) + 24
+            if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+              monthdays(2) = 29
+            else
+              monthdays(2) = 28
+            endif
+            dattim(3) = dattim(3) - 1
+            if (dattim(3).le.0) then
+              dattim(2) = dattim(2) - 1
+              if (dattim(2).le.0) then
+                dattim(2) = dattim(2) + 12
+                dattim(3) = dattim(3) + monthdays(dattim(2))
+                dattim(1) = dattim(1) - 1
+                if (mod(dattim(1),4).eq.0.and.dattim(1).ne.2000) then
+                  monthdays(2) = 29
+                else
+                  monthdays(2) = 28
+                endif
+              else
+                dattim(3) = dattim(3) + monthdays(dattim(2))
+              endif
+            endif
+          endif          
+        endif
+      endif
+ 3    return
+      end
+
       subroutine get_lun(ilun)
       implicit none
       integer*4 ilun,lun(100), i
@@ -1573,22 +1845,44 @@ c
       return
       end
 
-      subroutine azel_command(pass_start, pass_end, time_track, sat_az_track, sat_el_track, n_in, swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la)
+      subroutine azel_command(pass_start, pass_end, time_track, sat_az_track, sat_el_track, n_in, swdebug, swallowflip, swnoovl, ovlflag, azrate, elrate, azoff, eloff, swoffset, azpark, elpark, delta_t_la, swjumpin, swhmask)
       implicit none
       integer*4 n_in
       real*8    pass_start, pass_end, time_track(n_in), sat_az_track(n_in), sat_el_track(n_in), azrate, elrate, azoff, eloff, azpark, elpark, delta_t_la
       integer*1 ovlflag(n_in)
-      logical   swdebug, swallowflip, swnoovl, swoffset
+      logical   swdebug, swallowflip, swnoovl, swoffset, swjumpin, swhmask
 c
-      logical   swflip
+      logical   swflip, check_horizon, visible
       real*8    rsc, time_now, time_sleep, time_start, az1, az2, el1, el2, t_end_move
-      integer*4 n, i, j, ihr, imn, dattim(8), doy, i_check
+      integer*4 n, i, j, ihr, imn, dattim(8), doy, i_check, i_mask1, i_mask2, i_start
       character*5  c_zone
+      character*7  c_visstr
       character*8  c_date
       character*10 c_time
       character*50 c_command
 c
+      save
+c
       n = n_in
+c-- If Horizon mask is to be applied check the range here
+      if (swhmask) then
+        i_mask1 = -1
+        i_mask2 = -1
+        do j = 1, n
+          if (check_horizon(sat_az_track(j), sat_el_track(j)).and.i_mask1.lt.0) i_mask1 = j
+        enddo
+        do j = n, 1, -1
+          if (check_horizon(sat_az_track(j), sat_el_track(j)).and.i_mask2.lt.0) i_mask2 = j
+        enddo
+        if (i_mask1.eq.-1.or.i_mask2.eq.-1) then
+          write (*,'('' No El commands above Horizon mask - skipping pass '')')
+          return
+        endif
+        write (*,'('' Commands : '',I5, '' through : '',I5,'' delimit the window with El above Horizon mask (there may be gaps in between)'')') i_mask1, i_mask2
+      else
+        i_mask1 = 1
+        i_mask2 = n
+      endif
 c-- Apply offset if needed
       if (swoffset) then
         do j = 1, n
@@ -1647,6 +1941,7 @@ c-- Collapse the commands to only leave those with ovlflag=0
             endif
           endif
         enddo
+        if (swdebug) write (*,'('' Initial # of commands : '',I5,'' # remaining after overlap removal : '',I5)') n, j
         n = j
 c-- Do the time check loop twice to try and fix the problem spotted in the comment above
         if (i_check.eq.1) goto 3
@@ -1657,28 +1952,82 @@ c          rsc = time_track(j) - dble(ihr)*3600.0D0 - imn * 60.0D0
 c          write (*,'(I5,3x,2F10.3,2I7,F10.3,I5)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc, ovlflag(j)
 c        enddo
 c        read (*,*)
+c
+c-- If there is a swnoovl and an swhmask we need to check the hmask again, after the collapse !
+        if (swhmask) then
+          i_mask1 = -1
+          i_mask2 = -1
+          do j = 1, n
+            if (swoffset) then
+              if (check_horizon(sat_az_track(j) - azoff, sat_el_track(j) - eloff).and.i_mask1.lt.0) i_mask1 = j
+            else
+              if (check_horizon(sat_az_track(j), sat_el_track(j)).and.i_mask1.lt.0) i_mask1 = j
+            endif
+          enddo
+          do j = n, 1, -1
+            if (swoffset) then
+              if (check_horizon(sat_az_track(j) - azoff, sat_el_track(j) - eloff).and.i_mask2.lt.0) i_mask2 = j
+            else
+              if (check_horizon(sat_az_track(j), sat_el_track(j)).and.i_mask2.lt.0) i_mask2 = j
+            endif
+          enddo
+          if (i_mask1.eq.-1.or.i_mask2.eq.-1) then
+            write (*,'('' After overlap removal, there are no El commands above Horizon mask - skipping pass '')')
+            return
+          endif
+          write (*,'('' Commands : '',I5, '' through : '',I5,'' remain after overlap removal and delimit the window with El above Horizon mask (there may be gaps in between)'')') i_mask1, i_mask2
+        else
+          i_mask1 = 1
+          i_mask2 = n
+        endif
       endif
+      ihr = int(time_track(max(i_mask1-1,1))/3600.0D0)
+      imn = (int(time_track(max(i_mask1-1,1)) - dble(ihr)*3600.0D0)/60.0D0)
+      rsc = time_track(max(i_mask1-1,1)) - dble(ihr)*3600.0D0 - imn * 60.0D0
+      write (*,'(''Pass from : '',2I5,F10.3)') ihr, imn, rsc
+      ihr = int(time_track(min(i_mask2+1,n))/3600.0D0)
+      imn = (int(time_track(min(i_mask2+1,n)) - dble(ihr)*3600.0D0)/60.0D0)
+      rsc = time_track(min(i_mask2+1,n)) - dble(ihr)*3600.0D0 - imn * 60.0D0
+      write (*,'(''       to : '',2I5,F10.3)') ihr, imn, rsc
 c--
       call date_and_time(c_date, c_time, c_zone, dattim)
 c      write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), dattim(6), dattim(7), dattim(8)
       time_now = dble(dattim(5) * 3600.0 + dattim(6) * 60.0 + dattim(7) + dattim(8)/1000.0)
       time_sleep = pass_start - time_now - 60.0D0
 c-- Skip ongoing passes ?
-      if (time_sleep.lt.0.0) return
-      write (c_command,'(''sleep '',F8.1)') time_sleep
-c      write (*,*) c_command(1:lnblnk(c_command))
-      call system(c_command)
-      j = 1
+      if (time_sleep.lt.0.0.and.(.not.swjumpin)) return
+      if (time_sleep.gt.0.0) then
+        write (c_command,'(''sleep '',F8.1)') time_sleep
+        call system(c_command)
+      endif
+      if (swhmask) then
+        j = max(i_mask1 - 1, 1)
+      else
+        j = 1
+      endif
       ihr = int(time_track(j)/3600.0D0)
       imn = (int(time_track(j) - dble(ihr)*3600.0D0)/60.0D0)
       rsc = time_track(j) - dble(ihr)*3600.0D0 - imn * 60.0D0
-      write (*,'(I5,3x,2F10.3,2I5,F10.3)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc
+      if (swoffset) then
+        visible = check_horizon(sat_az_track(j) - azoff, sat_el_track(j) - eloff)
+        c_visstr = '       '
+        if (visible) c_visstr = 'Visible'
+        write (*,'(I5,3x,'' Commanded : '',2F10.3,2I5,F10.3,''   Actual satellite : '',2F10.3,3x,A7)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc, sat_az_track(j) - azoff, sat_el_track(j) - eloff, c_visstr
+      else
+        visible = check_horizon(sat_az_track(j), sat_el_track(j))
+        c_visstr = '       '
+        if (visible) c_visstr = 'Visible'
+        write (*,'(I5,3x,'' Commanded : '',2F10.3,2I5,F10.3,3x,A7)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc, c_visstr
+      endif
       call SPID_MD02(sat_az_track(j), sat_el_track(j), swdebug, swflip)
-      do j = 2,n
+c      i_start = j + 1
+      i_start = 2
+      do j = i_start, n
         call date_and_time(c_date, c_time, c_zone, dattim)
 c        write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), dattim(6), dattim(7), dattim(8)
         time_now = dble(dattim(5) * 3600.0 + dattim(6) * 60.0 + dattim(7) + dattim(8)/1000.0)
         time_sleep = time_track(j) - time_now - 0.2
+        if (time_sleep.lt.0.0) goto 2
         write (c_command,'(''sleep '',F8.1)') time_sleep
 c        write (*,*) c_command(1:lnblnk(c_command))
         call system(c_command)
@@ -1691,8 +2040,20 @@ c          write (*,*) dattim(1), dattim(2), dattim(3), dattim(4), dattim(5), da
           ihr = int(time_track(j)/3600.0D0)
           imn = (int(time_track(j) - dble(ihr)*3600.0D0)/60.0D0)
           rsc = time_track(j) - dble(ihr)*3600.0D0 - imn * 60.0D0
-          write (*,'(I5,3x,2F10.3,2I5,F10.3)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc
-          call SPID_MD02(sat_az_track(j), sat_el_track(j), swdebug, swflip)
+          if (swoffset) then
+            visible = check_horizon(sat_az_track(j) - azoff, sat_el_track(j) - eloff)
+            c_visstr = '       '
+            if (visible) c_visstr = 'Visible'
+            write (*,'(I5,3x,'' Commanded : '',2F10.3,2I5,F10.3,''   Actual satellite : '',2F10.3,3x,A7)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc, sat_az_track(j) - azoff, sat_el_track(j) - eloff, c_visstr
+          else
+            visible = check_horizon(sat_az_track(j), sat_el_track(j))
+            c_visstr = '       '
+            if (visible) c_visstr = 'Visible'
+            write (*,'(I5,3x,'' Commanded : '',2F10.3,2I5,F10.3,3x,A7)') j, sat_az_track(j), sat_el_track(j), ihr, imn, rsc, c_visstr
+          endif
+          if (i_mask1.le.j.and.j.le.i_mask2) then
+            call SPID_MD02(sat_az_track(j), sat_el_track(j), swdebug, swflip)
+          endif
           goto 2
         endif
         goto 1
@@ -1737,8 +2098,8 @@ c-- Remove offset if used
       logical swdebug, swflip
 c
       integer*1 devbuf(13), statbuf(13), unkbuf(13), inbuf1(13), inbuf2(13), dumbuf(13)
-      integer*4 lun, init, i, irec, ios
-      real*8 Azuse, Eluse, Azcorr, Elcorr
+      integer*4 lun, init, i, irec, ios, nstepsperdeg
+      real*8 Azuse, Eluse, Azcorr, Elcorr, spd
       character*4 cangle
       data init/0/
       data statbuf/'57'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'00'x,'1F'x,'20'x/
@@ -1746,7 +2107,8 @@ c
 c
       real*8 azrange(2), elrange(2), azlow, azhig, ellow, elhig
       logical swazlim, swellim, swok, swtiltcor
-      data swazlim/.false./, swellim/.false./, swtiltcor/.false./
+c Reminder - nstepsperdeg can be 5 or 10 - if 10 is used you HAVE to disable the newline to carriage return-newline conversion for the COM port using stty -F /dev/ttyS4 -onlcr !
+      data swazlim/.false./, swellim/.false./, swtiltcor/.false./, nstepsperdeg/10/
 c
       real*8    azstor, elstor
       integer*4 dattim(8)
@@ -1762,6 +2124,7 @@ c
         call get_lun(lun)
         open (unit=lun,file='/dev/ttyS4',access='direct',recl=13)
       endif
+      spd   = dble(nstepsperdeg)
       Azuse = min(max(Az,0.0D0),360.0D0)
       Eluse = min(max(El,0.0D0), 90.0D0)
       if (swflip) then
@@ -1792,24 +2155,26 @@ c        call tilt_correct_cos(Azcorr, Elcorr)
 c-- Trying to find the pointing error
       if (swok) then
         call date_and_time(c_date, c_time, c_zone, dattim)
-        if (swdebug) write (*,'(4I5,3(A,2F10.3))') (dattim(i), i=5,8), ' In : ', Az, El,' Used: ', azstor, elstor,' Tilt corrected : ', Azuse, Eluse
+        if (swdebug) write (*,'(4I5,3(A,2F10.3),2I10)') (dattim(i), i=5,8), ' In : ', Az, El,' Used: ', azstor, elstor,' Tilt corrected : ', Azuse, Eluse, nint(spd * (Azuse + 360.0D0)), nint(spd * (Eluse + 360.0D0))
       endif
       if (.not.swok) goto 1
 c      write (*,*) '==> OK'
 c--
-      write (cangle,'(I4.4)') nint(5.0D0 * (Azuse + 360.0D0))
+      write (cangle,'(I4.4)') nint(spd * (Azuse + 360.0D0))
       devbuf( 1) = '57'x
       devbuf( 2) = ichar(cangle(1:1))
       devbuf( 3) = ichar(cangle(2:2))
       devbuf( 4) = ichar(cangle(3:3))
       devbuf( 5) = ichar(cangle(4:4))
-      devbuf( 6) = '05'x
-      write (cangle,'(I4.4)') nint(5.0D0 * (Eluse + 360.0D0))
+      if (nstepsperdeg.eq.5)  devbuf( 6) = '05'x
+      if (nstepsperdeg.eq.10) devbuf( 6) = '0A'x
+      write (cangle,'(I4.4)') nint(spd * (Eluse + 360.0D0))
       devbuf( 7) = ichar(cangle(1:1))
       devbuf( 8) = ichar(cangle(2:2))
       devbuf( 9) = ichar(cangle(3:3))
       devbuf(10) = ichar(cangle(4:4))
-      devbuf(11) = '05'x
+      if (nstepsperdeg.eq.5)  devbuf(11) = '05'x
+      if (nstepsperdeg.eq.10) devbuf(11) = '0A'x
       devbuf(12) = '2F'x
       devbuf(13) = '20'x
       if (swdebug) write (*,'(4(Z2.2,1x),2x,4(Z2.2,1x))') (devbuf(i), i = 2,5), (devbuf(i), i = 7,10)
@@ -2080,6 +2445,46 @@ c-- As there is a read in between commands I ignore here the time it takes to mo
       return
       end
 
+      logical function check_horizon(az, el)
+      implicit none
+      real*8 az, el
+c
+      real*4 elmask(38),azvals(38), elcheck
+      integer*4 i
+c
+c-- Lazy approach at the start and end point the 355 deg (start) and 5 deg (end) values are repeated, to aid interpolating.
+c-- Original data
+c      data elmask/40.9  ,39.2  ,30.2  ,19.5  , 9.7  ,16.4  ,17.8  ,20.4  ,27.6  ,30.2  ,23.1  ,
+c     *                   19.5,   4.4,   3.0,   5.3,   7.0,   5.3,   8.8,   8.8,   9.7,  10.6  ,
+c     *                   11.5,  10.6,   9.7,  11.1,  11.1,  18.2,  19.1,  10.6,  13.3,  15.1  ,
+c     *                   16.4,  18.6,  30.2,  37.4,  39.2,  40.9,                               39.2/
+c      data azvals/  -5.0,   5.0,  15.0,  25.0,  35.0,  45.0,  55.0,  65.0,  75.0,  85.0,  95.0,
+c     *                    105.0, 115.0, 125.0, 135.0, 145.0, 155.0, 165.0, 175.0, 185.0, 195.0,
+c     *                    205.0, 215.0, 225.0, 235.0, 245.0, 255.0, 265.0, 275.0, 285.0, 295.0,
+c     *                    305.0, 315.0, 325.0, 335.0, 345.0, 355.0,                            365.0/
+c
+c-- Modded data (based on observations in X-band)
+      data elmask/40.9  ,39.2  ,30.7  ,19.5  , 9.7  ,16.4  ,17.8  ,20.4  ,27.6  ,30.2  ,23.1  ,
+     *                   19.5,   4.4,   3.0,   5.3,   6.5,   5.3,   8.8,   8.8,   9.7,  10.6  ,
+     *                   11.0,  10.6,   9.7,  11.1,  11.1,  18.2,  19.1,  10.6,  13.3,  15.1  ,
+     *                   16.4,  18.1,  30.2,  37.4,  39.2,  40.9,                               39.2/
+      data azvals/  -5.0,   5.0,  15.0,  25.0,  35.0,  45.0,  55.0,  65.0,  75.0,  85.0,  95.0,
+     *                    105.0, 115.0, 125.0, 135.0, 145.0, 155.0, 165.0, 175.0, 185.0, 195.0,
+     *                    205.0, 215.0, 225.0, 235.0, 245.0, 255.0, 265.0, 275.0, 285.0, 295.0,
+     *                    305.0, 315.0, 325.0, 335.0, 345.0, 355.0,                            365.0/
+c
+      check_horizon = .false.
+      if (az.le.azvals(1).or.az.gt.azvals(38)) return
+      do i = 1, 37
+        if (azvals(i).lt.az.and.az.le.azvals(i+1)) goto 1
+      enddo
+c-- linear interpolation
+ 1    elcheck = ((az - azvals(i)) / (azvals(i+1) - azvals(i))) * (elmask(i+1) - elmask(i)) + elmask(i)
+      if (el.gt.dble(elcheck)) check_horizon = .true.
+c
+      return
+      end
+
       subroutine tletrack_help()
 c
       write (*,'(''-- Run the program as follows: '')')
@@ -2107,14 +2512,15 @@ c
       write (*,'('' In this file the 3rd argument is the priority for a certain satellite. Used in de-conflicting'')')
       write (*,'('' '')')
       write (*,'('' A special use case is :'')')
-      write (*,'(''   ./tletrack.exe @sun beam=1.0 tiltcor'')')
-      write (*,'('' which enables look ahead tracking of the sun'')')
+      write (*,'(''   ./tletrack.exe @sun beam=1.0'')')
+      write (*,'('' which enables look ahead tracking of the sun - JPL method below - using @horcmd=10 - is much better !'')')
       write (*,'('' '')')
       write (*,'('' A second special use case is :'')')
       write (*,'(''   ./tletrack.exe @horcmd=499 beam=1.0 tiltcor'')')
       write (*,'('' which enables look ahead tracking of the JPL HORIZONS objects (here Mars ; which has ID # 499)'')')
       write (*,'('' NOTE 1 : Also see noload command below'')')
-      write (*,'('' NOTE 2 : At the moment it is a primitive implementation (without look ahead) that points to the object position every minute'')')
+      write (*,'('' NOTE 2 : At the moment it is a primitive implementation that points to the object position every minute with a 30 second lookahead'')')
+      write (*,'('' NOTE 3 : Time accuracy  is below 1 second'')')
       write (*,'('' '')')
       write (*,'(''   Second argument is the type  of TLE : resource or weather IF the first argument is not an indirect ! '')')
       write (*,'(''                   NOT required if first argument is reference to indirect list (using @) '')')
@@ -2138,20 +2544,27 @@ c
       write (*,'('' '')')
       write (*,'(''     NOTE : The program terminates after a raster or a cross'')')
       write (*,'('' '')')
-      write (*,'(''     azrange=130-290 only allow commands with an Azimuth   in this range - used when running tests at the dish'')')
-      write (*,'(''     elrange=0-45    only allow commands with an Elevation in this range - used when running tests at the dish'')')
-      write (*,'(''     eltrackmin=8.0  limits the minimum elevation where tracking starts to a user defined value (here 8.0 deg - default is 3.0 deg)'')')
-      write (*,'(''     tiltcor         enable the tilt correction algorithm - rotation of the dish-object vector around a user defined vector by a user defined amount'')')
-      write (*,'(''                     this allows to compensate for not-perfect verticality of the center pole - which I unfortunately have'')')
-      write (*,'(''     azpark=180.0    Override the default park position of Az=209.0'')')
-      write (*,'(''     elpark=45.0     Override the default park position of El=0.0'')')
-      write (*,'(''     azoff=-1.0      Define an Az offset - found from pre-calibration - to add to the calculated values'')')
-      write (*,'(''     eloff=0.9       Define an El offset - found from pre-calibration - to add to the calculated values'')')
-      write (*,'(''     calib           inserts an Az/El calibration routine - assumes you defined azpark, elpark, azoff and eloff !!'')')
-      write (*,'(''     azelalt         Enables my own Az/El calculation - which is slightly different - but likely incorrect.'')')
-      write (*,'(''     deltat=0.9      Defines an offset time which is added (!) to all calculatedcommanding times'')')
-      write (*,'(''     predict=8       Limits the prediction window to the user defined value (here 8) instead of 24. Ignored for using JPL HORIZONS'')')
-      write (*,'(''     noload          Do not reload the HORIZONS file - re-uses the existing tempeph.txt.'')')
+      write (*,'(''     azrange=130-290  only allow commands with an Azimuth   in this range - used when running tests at the dish'')')
+      write (*,'(''     elrange=0-45     only allow commands with an Elevation in this range - used when running tests at the dish'')')
+      write (*,'(''     eltrackmin=8.0   limits the minimum elevation where tracking starts to a user defined value (here 8.0 deg - default is 3.0 deg)'')')
+      write (*,'(''     tiltcor          enable the tilt correction algorithm - rotation of the dish-object vector around a user defined vector by a user defined amount'')')
+      write (*,'(''                      this allows to compensate for not-perfect verticality of the center pole'')')
+      write (*,'(''     azpark=180.0     Override the default park position of Az=209.0'')')
+      write (*,'(''     elpark=45.0      Override the default park position of El=0.0'')')
+      write (*,'(''     azoff=-1.0       Define an Az offset - found from pre-calibration - to add to the calculated values'')')
+      write (*,'(''     eloff=0.9        Define an El offset - found from pre-calibration - to add to the calculated values'')')
+      write (*,'(''     calib            inserts an Az/El calibration routine - assumes you defined azpark, elpark, azoff and eloff !!'')')
+      write (*,'(''     azelalt          Enables my own Az/El calculation - which is slightly different - but likely incorrect.'')')
+      write (*,'(''     deltat=0.9       Defines an offset time which is added (!) to all calculatedcommanding times'')')
+      write (*,'(''     predict=8        Limits the prediction window to the user defined value (here 8) instead of 24. Ignored for using JPL HORIZONS'')')
+      write (*,'(''     noload           Do not reload the HORIZONS file - re-uses the existing tempeph.txt - is faster and avoids unnecessarily loading the JPL Horizons system'')')
+      write (*,'(''     point=100.0,50.0 Points the dish to the defined Az, El (if combined with the live option) - ALL OTHER OPTIONS ARE IGNORED !!!'')')
+      write (*,'(''                      A valid command line could be :'')')
+      write (*,'(''                      ./eltrack.exe \"AQUA\" resource point=200.0,20.0 live'')')
+      write (*,'(''                      This would point the dish to that position and then stop'')')
+      write (*,'(''     doublec          In certain conditions (point, @horcmd) execute the pointing command twice. This allows the MD-02 to converge better'')')
+      write (*,'(''     jumpin           When asking for a single satellite to be tracked, this tries to jump in live if the sat is above the horizon'')')
+      write (*,'(''     hmask            Use the user defined (in the code) horizon mask to determine the start and end of a pass - my location derived from L-band'')')
       write (*,'('' '')')
       write (*,'('' The TLE environment variable defines where to find the TLE files '')')
       write (*,'('' The LONG and LAT environment variables defined the geographic location of the dish (also used for JPL HORIZONS)'')')

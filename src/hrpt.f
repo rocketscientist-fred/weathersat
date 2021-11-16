@@ -57,10 +57,10 @@ c
       integer*4 nmaxlin, nmaxpix, nmaxch, nstereo, n_sza, ndivgrid, nmergemax, ncolmax
 #ifdef LARGE
 c      parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=270000000, n_sza=1800, ndivgrid=4, nmergemax=5, ncolmax=4096)
-      parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=300000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
+      parameter (nmaxlin=24000, nmaxpix=5416, nmaxch=10, nstereo=300000000, n_sza=1800, ndivgrid=10, nmergemax=6, ncolmax=4096)
 #endif
 #ifdef MEDIUM
-      parameter (nmaxlin=11000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=5, ncolmax=4096)
+      parameter (nmaxlin=11000, nmaxpix=2708, nmaxch=10, nstereo=66000000, n_sza=1800, ndivgrid=10, nmergemax=6, ncolmax=4096)
 #endif
 c
       integer*1 linevalid(nmaxlin), satch_valid(nmaxlin), stereo_count(nstereo,3)
@@ -606,15 +606,15 @@ c-- The automated night time switching as is usual in batch mode, makes no sense
       filedata = outstring(1:lnblnk(outstring))//filedatain(j:lnblnk(filedatain))
 c-- Implement the modis PAN here. For the time being is is hardcoded to use ch 143 for RGB, with 1 being 250 m and 4 and 3 500 m - use i_merge to select
       if (swmerge.and.swaqmpan) then
-        if (i_merge.eq.3) then
+        if (mod(i_merge,3).eq.0) then
           swaqm1000 = .false.
           swaqm500  = .true.
           swaqm250  = .false.
-        else if (i_merge.eq.2) then
+        else if (mod(i_merge,3).eq.2) then
           swaqm1000 = .false.
           swaqm500  = .true.
           swaqm250  = .false.
-        else if (i_merge.eq.1) then
+        else if (mod(i_merge,3).eq.1) then
           swaqm1000 = .false.
           swaqm500  = .false.
           swaqm250  = .true.
@@ -800,6 +800,7 @@ c-- Try AQUA MODIS ....... things like nr. of channels, RGB selection etc etc re
         swnoaa  = .false.
         swmn2   = .false.
         swaqmod = .true.
+        swterra = .false.
         caqmod  = '.dat'
         ir      = 2
         ig      = 2
@@ -808,7 +809,7 @@ c-- Try AQUA MODIS ....... things like nr. of channels, RGB selection etc etc re
 c-- Initialise the projection correction arrays
 c-- Remember that the IFOV (= pixel size) is BIGGER than the sampling interval !
         sat_avg_alt  = 705.0
-        sat_fov      = 55.00 * 2.0
+        sat_fov      = 55.37 * 2.0
         if (swaqm1000) nsat_pix = 1354
         if (swaqm500)  nsat_pix = 2708
         if (swaqm250)  nsat_pix = 5416
@@ -1894,15 +1895,15 @@ c
                       do l = 1, ndivuse
                         do j = 1, ndivuse
                           if (swmerge.and.swaqmpan) then
-                            if (i_merge.eq.3) then
+                            if (mod(i_merge,3).eq.0) then
                               pixcol(1) = 0
                               pixcol(2) = 0
                               pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
-                            else if (i_merge.eq.2) then
+                            else if (mod(i_merge,3).eq.2) then
                               pixcol(1) = 0
                               pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
                               pixcol(3) = 0
-                            else if (i_merge.eq.1) then
+                            else if (mod(i_merge,3).eq.1) then
                               pixcol(1) = fetch_pixel(satch_valr, ndivuse, j, l)
                               pixcol(2) = 0
                               pixcol(3) = 0
@@ -1961,15 +1962,15 @@ c
                         do l = 1, ndivuse
                           do j = 1, ndivuse
                             if (swmerge.and.swaqmpan) then
-                              if (i_merge.eq.3) then
+                              if (mod(i_merge,3).eq.0) then
                                 pixcol(1) = 0
                                 pixcol(2) = 0
                                 pixcol(3) = w1 * (w3 * (fetch_pixel(satch_szab, ndivuse, j, l) - (perc2-perc1))) + w2 * fetch_pixel(satch_valb, ndivuse, j, l)
-                              else if (i_merge.eq.2) then
+                              else if (mod(i_merge,3).eq.2) then
                                 pixcol(1) = 0
                                 pixcol(2) = w1 * (w3 * (fetch_pixel(satch_szag, ndivuse, j, l) - (perc2-perc1))) + w2 * fetch_pixel(satch_valg, ndivuse, j, l)
                                 pixcol(3) = 0
-                              else if (i_merge.eq.1) then
+                              else if (mod(i_merge,3).eq.1) then
                                 pixcol(1) = w1 * (w3 * (fetch_pixel(satch_szar, ndivuse, j, l) - (perc2-perc1))) + w2 * fetch_pixel(satch_valr, ndivuse, j, l)
                                 pixcol(2) = 0
                                 pixcol(3) = 0
@@ -2013,15 +2014,15 @@ c
                         do l = 1, ndivuse
                           do j = 1, ndivuse
                             if (swmerge.and.swaqmpan) then
-                              if (i_merge.eq.3) then
+                              if (mod(i_merge,3).eq.0) then
                                 pixcol(1) = 0
                                 pixcol(2) = 0
                                 pixcol(3) = (w3 * (fetch_pixel(satch_valb, ndivuse, j, l) - (perc2-perc1)))
-                              else if (i_merge.eq.2) then
+                              else if (mod(i_merge,3).eq.2) then
                                 pixcol(1) = 0
                                 pixcol(2) = (w3 * (fetch_pixel(satch_valg, ndivuse, j, l) - (perc2-perc1)))
                                 pixcol(3) = 0
-                              else if (i_merge.eq.1) then
+                              else if (mod(i_merge,3).eq.1) then
                                 pixcol(1) = (w3 * (fetch_pixel(satch_valr, ndivuse, j, l) - (perc2-perc1)))
                                 pixcol(2) = 0
                                 pixcol(3) = 0
@@ -2095,15 +2096,15 @@ c-- Map to IQ colours to try and separate the land
                         pixcol(3) = wop1 * satch_image(k  ,ibp,i) + wop2 * satch_image(k  , opchb,i)
                       else
                         if (swmerge.and.swaqmpan) then
-                          if (i_merge.eq.3) then
+                          if (mod(i_merge,3).eq.0) then
                             pixcol(1) = 0
                             pixcol(2) = 0
                             pixcol(3) = satch_image(k  , ibp, i)
-                          else if (i_merge.eq.2) then
+                          else if (mod(i_merge,3).eq.2) then
                             pixcol(1) = 0
                             pixcol(2) = satch_image(k  , igp, i)
                             pixcol(3) = 0
-                          else if (i_merge.eq.1) then
+                          else if (mod(i_merge,3).eq.1) then
                             pixcol(1) = satch_image(k  , irp, i)
                             pixcol(2) = 0
                             pixcol(3) = 0
@@ -2137,15 +2138,15 @@ c                          pixcol(2) = wop1 * satch_valg(j,l) + wop2 * satch_val
 c                          pixcol(3) = wop1 * satch_valb(j,l) + wop2 * satch_valb_op(j,l)
                           else
                             if (swmerge.and.swaqmpan) then
-                              if (i_merge.eq.3) then
+                              if (mod(i_merge,3).eq.0) then
                                 pixcol(1) = 0
                                 pixcol(2) = 0
                                 pixcol(3) = fetch_pixel(satch_valb, ndivuse, j, l)
-                              else if (i_merge.eq.2) then
+                              else if (mod(i_merge,3).eq.2) then
                                 pixcol(1) = 0
                                 pixcol(2) = fetch_pixel(satch_valg, ndivuse, j, l)
                                 pixcol(3) = 0
-                              else if (i_merge.eq.1) then
+                              else if (mod(i_merge,3).eq.1) then
                                 pixcol(1) = fetch_pixel(satch_valr, ndivuse, j, l)
                                 pixcol(2) = 0
                                 pixcol(3) = 0
@@ -3405,7 +3406,7 @@ c
           longlat(j,i) = 0.0D0
         enddo
       enddo
-      if (etascan.le.1.0D-6) then
+      if (abs(etascan).le.1.0D-6) then
         longlat(1,i_mid) = long
         longlat(2,i_mid) = lat
       endif
@@ -3453,7 +3454,7 @@ c-- Put the satellite vector on Earth's surface by setting latitude (= lla(3) ) 
       z1     = xyz(3)
 c-- Experimental - for MN2 - Rotate the vector from nadir point on earth to satellite around the vector d - angle is Eta
       eta    = etascan
-      if (eta.gt.1.0D-6) then
+      if (abs(eta).gt.1.0D-6) then
         aa(1)  = d1
         aa(2)  = d2
         aa(3)  = d3
@@ -3729,7 +3730,7 @@ c
           longlat(j,i) = 0.0D0
         enddo
       enddo
-      if (etascan.le.1.0D-6) then
+      if (abs(etascan).le.1.0D-6) then
         longlat(1,i_mid) = long
         longlat(2,i_mid) = lat
       endif
@@ -3813,7 +3814,7 @@ c-- Put the satellite vector on Earth's surface by setting latitude (= lla(3) ) 
         z1     = xyz(3)
 c-- Experimental - for MN2 - Rotate the vector from nadir point on earth to satellite around the vector d - angle is Eta
         eta    = etascan
-        if (eta.gt.1.0D-6) then
+        if (abs(eta).gt.1.0D-6) then
           aa(1)  = d1
           aa(2)  = d2
           aa(3)  = d3
@@ -4796,27 +4797,27 @@ c
       iy = iy - iyminz + 1
       if (1.le.ix.and.ix.le.nx_in.and.1.le.iy.and.iy.le.ny_in) then
         if (stereo_count_rgb(ix,iy,i_merge).eq.0) then
-          if (i_merge.eq.1) then
+          if (mod(i_merge,3).eq.1) then
             stereo_image(1,ix,iy) = pix(1)
           endif
-          if (i_merge.eq.2) then
+          if (mod(i_merge,3).eq.2) then
             stereo_image(2,ix,iy) = pix(2)
           endif
-          if (i_merge.eq.3) then
+          if (mod(i_merge,3).eq.0) then
             stereo_image(3,ix,iy) = pix(3)
           endif
         else if (stereo_count_rgb(ix,iy,i_merge).eq.1) then
-          if (i_merge.eq.1) then
+          if (mod(i_merge,3).eq.1) then
             stereo_image(1,ix,iy) = (stereo_image(1,ix,iy) + pix(1)) / 2
           endif
-          if (i_merge.eq.2) then
+          if (mod(i_merge,3).eq.2) then
             stereo_image(2,ix,iy) = (stereo_image(2,ix,iy) + pix(2)) / 2
           endif
-          if (i_merge.eq.3) then
+          if (mod(i_merge,3).eq.0) then
             stereo_image(3,ix,iy) = (stereo_image(3,ix,iy) + pix(3)) / 2
           endif
         else if (stereo_count_rgb(ix,iy,i_merge).ge.2) then
-          if (i_merge.eq.1) then
+          if (mod(i_merge,3).eq.1) then
             i4v1 = stereo_image(1,ix,iy)
             i4v2 = stereo_count_rgb(ix,iy,i_merge)
             if (i4v2.lt.0) i4v2 = i4v2 + 256
@@ -4827,7 +4828,7 @@ c
             i4v3 = i4v3 / i4v2
             stereo_image(1,ix,iy) = i4v3
           endif
-          if (i_merge.eq.2) then
+          if (mod(i_merge,3).eq.2) then
             i4v1 = stereo_image(2,ix,iy)
             i4v2 = stereo_count_rgb(ix,iy,i_merge)
             if (i4v2.lt.0) i4v2 = i4v2 + 256
@@ -4838,7 +4839,7 @@ c
             i4v3 = i4v3 / i4v2
             stereo_image(2,ix,iy) = i4v3
           endif
-          if (i_merge.eq.3) then
+          if (mod(i_merge,3).eq.0) then
             i4v1 = stereo_image(3,ix,iy)
             i4v2 = stereo_count_rgb(ix,iy,i_merge)
             if (i4v2.lt.0) i4v2 = i4v2 + 256

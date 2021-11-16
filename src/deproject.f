@@ -7,7 +7,7 @@ c
       integer*2 npos
       integer*4 i_arg, luntmp, i, i1, i2, i3, nx, ny, lun, lunout, nrecl, ncorrect_pix, ios, nrscanlines
       real*4    alt, fov
-      logical   swsharpen, swmersi1, swdebug
+      logical   swsharpen, swmersi1, swdebug, swairs, swfov
       character*1000 argstring, command
 c
       alt         = 800.0
@@ -17,6 +17,8 @@ c-- Default AQUA MODIS Like with 40 scanlines per block
       swsharpen = .false.
       swmersi1  = .false.
       swdebug   = .false.
+      swairs    = .false.
+      swfov     = .false.
       do i_arg = 2, 20
         call getarg(i_arg, argstring)
         if (index(argstring(1:lnblnk(argstring)),'alt=').ne.0) then
@@ -26,6 +28,7 @@ c-- Default AQUA MODIS Like with 40 scanlines per block
         if (index(argstring(1:lnblnk(argstring)),'fov=').ne.0) then
           call string_to_r4(argstring(index(argstring,'fov=')+4:lnblnk(argstring)), npos, fov)
           write (*,'(''Field of view (deg)                      : '',F10.3)') fov
+          swfov = .true.
         endif
         if (index(argstring(1:lnblnk(argstring)),'sharpen').ne.0) swsharpen = .true.
         if (index(argstring(1:lnblnk(argstring)),'bowtie=').ne.0) then
@@ -36,13 +39,18 @@ c-- Default AQUA MODIS Like with 40 scanlines per block
           write (*,'(''# of scanlines                           : '',I10)') nrscanlines
         endif
         if (index(argstring(1:lnblnk(argstring)),'debug').ne.0) swdebug = .true.
+        if (index(argstring(1:lnblnk(argstring)),'airs').ne.0.or.index(argstring(1:lnblnk(argstring)),'AIRS').ne.0) swairs = .true.
       enddo
+      if (swairs.and.(.not.swfov)) then
+        fov = 99.0
+        write (*,'(''Field of view (deg)                      : '',F10.3)') fov
+      endif
       call getarg(1, argstring)
       if (index(argstring,'--help').ne.0) then
         call deproject_help()
         stop
       endif
-      write (command,'(''identify '',a,'' >& ./tmp.txt'')') argstring(1:lnblnk(argstring))
+      write (command,'(''identify '',a,'' > ./tmp.txt'')') argstring(1:lnblnk(argstring))
       call my_system(command(1:lnblnk(command)))
       call get_lun(luntmp)
       open (unit=luntmp,file='./tmp.txt',access='sequential',form='formatted')
@@ -72,7 +80,7 @@ c-- Default AQUA MODIS Like with 40 scanlines per block
         if (argstring(i:i).eq.'.'.and.i1.eq.0) i1 = i
         i = i - 1
       enddo
-      if (.not.swmersi1) then
+      if ((.not.swmersi1).and.(.not.swairs)) then
 c-- Convert the source image to RGB
         write (command,'(''convert '',a,'' -depth 16 rgb:'',a)') argstring(1:lnblnk(argstring)),argstring(1:i1)//'dat'
         write (*,*) command(1:lnblnk(command))
@@ -110,6 +118,51 @@ c-- Bowtie correct (experimental)
         write (*,*) command(1:lnblnk(command))
         call my_system(command(1:lnblnk(command)))
         call bowtie_fix(argstring(1:i1)//'B.'//'dat', nx, nrscanlines)
+        write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'B.'//'dat.cor',argstring(1:i1)//'B.cor.'//'png'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        write (command,'(''convert '',3(a,1x),'' -combine '',a)') argstring(1:i1)//'R.cor.'//'png', argstring(1:i1)//'G.cor.'//'png', argstring(1:i1)//'B.cor.'//'png', argstring(1:i1)//'RGB.cor.'//'png'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+c-- Convert the Bow-Tie corrected source image to RGB to be deprojected
+        write (command,'(''convert '',a,'' -depth 16 rgb:'',a)') argstring(1:i1)//'RGB.cor.'//'png',argstring(1:i1)//'dat'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+      endif
+      if (swairs) then
+c-- Override nrscanlines for AIRS data
+        nrscanlines = 9
+        write (*,'(''# of scanlines                           : '',I10)') nrscanlines
+        write (command,'(''convert '',a,'' -depth 16 -channel R -separate gray:'',a,a)') argstring(1:lnblnk(argstring)),argstring(1:i1)//'R.'//'dat'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        write (command,'(''convert '',a,'' -depth 16 -channel G -separate gray:'',a,a)') argstring(1:lnblnk(argstring)),argstring(1:i1)//'G.'//'dat'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        write (command,'(''convert '',a,'' -depth 16 -channel B -separate gray:'',a,a)') argstring(1:lnblnk(argstring)),argstring(1:i1)//'B.'//'dat'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        if (swdebug) then
+c-- Back to single channel PNG's to check
+          write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'R.'//'dat',argstring(1:i1)//'R.'//'png'
+          write (*,*) command(1:lnblnk(command))
+          call my_system(command(1:lnblnk(command)))
+          write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'G.'//'dat',argstring(1:i1)//'G.'//'png'
+          write (*,*) command(1:lnblnk(command))
+          call my_system(command(1:lnblnk(command)))
+          write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'B.'//'dat',argstring(1:i1)//'B.'//'png'
+          write (*,*) command(1:lnblnk(command))
+          call my_system(command(1:lnblnk(command)))
+        endif
+        call airs_fix(argstring(1:i1)//'R.'//'dat', nx, nrscanlines)
+        write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'R.'//'dat.cor',argstring(1:i1)//'R.cor.'//'png'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        call airs_fix(argstring(1:i1)//'G.'//'dat', nx, nrscanlines)
+        write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'G.'//'dat.cor',argstring(1:i1)//'G.cor.'//'png'
+        write (*,*) command(1:lnblnk(command))
+        call my_system(command(1:lnblnk(command)))
+        call airs_fix(argstring(1:i1)//'B.'//'dat', nx, nrscanlines)
         write (command,'(''convert -depth 16 -size '',I5.5,''x'',I5.5,1x,''gray:'',a,'' -depth 16 '',a)') nx, ny, argstring(1:i1)//'B.'//'dat.cor',argstring(1:i1)//'B.cor.'//'png'
         write (*,*) command(1:lnblnk(command))
         call my_system(command(1:lnblnk(command)))
@@ -528,27 +581,29 @@ c
           w1 = abs(d - int(d))
           w2 = 1.0 - w1
           k = j + int(d)
-          if (d.ge.0.0) then
-            k = k + 1
-            if (1.le.k.and.k.le.nrscanlines) then
-              corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
-              pixcount(i,k) = pixcount(i,k) + w1
-            endif
-            k = k - 1
-            if (1.le.k.and.k.le.nrscanlines) then
-              corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
-              pixcount(i,k) = pixcount(i,k) + w2
-            endif
-          else
-            k = k - 1
-            if (1.le.k.and.k.le.nrscanlines) then
-              corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
-              pixcount(i,k) = pixcount(i,k) + w1
-            endif
-            k = k + 1
-            if (1.le.k.and.k.le.nrscanlines) then
-              corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
-              pixcount(i,k) = pixcount(i,k) + w2
+          if (rawimg(i,j).ne.0) then
+            if (d.ge.0.0) then
+              k = k + 1
+              if (1.le.k.and.k.le.nrscanlines) then
+                corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
+                pixcount(i,k) = pixcount(i,k) + w1
+              endif
+              k = k - 1
+              if (1.le.k.and.k.le.nrscanlines) then
+                corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
+                pixcount(i,k) = pixcount(i,k) + w2
+              endif
+            else
+              k = k - 1
+              if (1.le.k.and.k.le.nrscanlines) then
+                corimg(i,k) = corimg(i,k) + w1 * rawimg(i,j)
+                pixcount(i,k) = pixcount(i,k) + w1
+              endif
+              k = k + 1
+              if (1.le.k.and.k.le.nrscanlines) then
+                corimg(i,k) = corimg(i,k) + w2 * rawimg(i,j)
+                pixcount(i,k) = pixcount(i,k) + w2
+              endif
             endif
           endif
         enddo
@@ -556,13 +611,11 @@ c
       do i = 1, nmaxpix
         do j = 1, nrscanlines
           if (pixcount(i,j).ne.0.0) corimg(i,j) = nint(float(corimg(i,j)) / pixcount(i,j))
-c          if (pixcount(i,j).gt.0.2) corimg(i,j) = nint(float(corimg(i,j)) / pixcount(i,j))
         enddo
       enddo
       do i = 1, nmaxpix
         do j = 1, nrscanlines
           if (pixcount(i,j).eq.0.0.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
-c          if (pixcount(i,j).le.0.2.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
         enddo
       enddo
       call get_lun(lunout)
@@ -745,7 +798,179 @@ c
 c
       return
       end
-      
+
+      subroutine airs_fix(filenm, nmaxpix, nlines)
+      implicit none
+      integer*4 nmaxpix, nlines
+      character*(*) filenm
+c
+      integer*4 nrscanlines
+      integer*4, allocatable :: displace(:, :)
+c
+      if (.not.allocated(displace)) allocate(displace(nmaxpix, nlines))
+      call airs_displacement(displace, nmaxpix, nlines)
+      call airs_lines(filenm, nmaxpix, nrscanlines)
+      call airs_correct(filenm, displace, nmaxpix, nlines, nrscanlines)
+      if (allocated(displace)) deallocate(displace)
+      return
+      end
+
+      subroutine airs_correct(filenm, displace, nmaxpix, nlines, nrscanlines)
+      implicit none
+      integer*4 nmaxpix, nlines, nrscanlines
+      integer*4 displace(nmaxpix, nlines)
+      character*(*) filenm
+c
+      integer*4 lunin, lunout, i, j, k
+      real*4    w1, w2, d
+c
+      integer*2, allocatable :: inbuf(:)
+      integer*4, allocatable :: rawimg(: , :)
+      integer*4, allocatable :: corimg(: , :)
+      integer*4, allocatable :: pixcount(: , :)
+c
+      call get_lun(lunin)
+      if (.not.allocated(inbuf)) allocate(inbuf(nmaxpix))
+      open (unit=lunin,file=filenm, access='direct',form='unformatted', recl=nmaxpix*2)
+      if (.not.allocated(pixcount)) allocate(pixcount(nmaxpix, nrscanlines))
+      if (.not.allocated(rawimg))   allocate(rawimg(nmaxpix, nrscanlines))
+      if (.not.allocated(corimg))   allocate(corimg(nmaxpix, nrscanlines))
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          pixcount(i,j) = 0
+          rawimg(i,j)   = 0
+          corimg(i,j)   = 0
+        enddo
+      enddo
+      do i = 1, nrscanlines
+        read (lunin,rec=i) inbuf
+        do j = 1, nmaxpix
+          if (inbuf(j).lt.0) then
+            rawimg(j,i) = inbuf(j) + 65536
+          else
+            rawimg(j,i) = inbuf(j)
+          endif
+        enddo
+      enddo
+      close (unit=lunin)
+      call free_lun(lunin)
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          corimg(displace(i, nlines + 1 - (mod(j-1,nlines) + 1)),j)   = rawimg(i,j)
+          pixcount(displace(i, nlines + 1 - (mod(j-1,nlines) + 1)),j) = pixcount(displace(i, nlines + 1 - (mod(j-1,nlines) + 1)),j) + 1
+        enddo
+      enddo
+c      do i = 1, nmaxpix
+c        do j = 1, nrscanlines
+c          if (pixcount(i,j).ne.0.0) corimg(i,j) = nint(float(corimg(i,j)) / pixcount(i,j))
+c        enddo
+c      enddo
+      do i = 1, nmaxpix
+        do j = 1, nrscanlines
+          if (pixcount(i,j).eq.0.0.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
+c          if (pixcount(i,j).le.0.2.and.2.le.j.and.j.le.nrscanlines-1) corimg(i,j) = (corimg(i,j-1)+corimg(i,j+1)) / 2.0
+        enddo
+      enddo
+      call get_lun(lunout)
+      open (unit=lunout,file=filenm//'.cor', access='direct',form='unformatted', recl=nmaxpix*2)
+      do i = 1, nrscanlines
+        do j = 1, nmaxpix
+          if (0.le.corimg(j,i).and.corimg(i,j).le.32767) then
+            inbuf(j) = corimg(j,i)
+          else
+            inbuf(j) = corimg(j,i) - 65536
+          endif
+        enddo
+        write (lunout,rec=i) inbuf
+      enddo
+c
+      close (unit=lunout)
+      call free_lun(lunout)
+      if (allocated(inbuf)) deallocate(inbuf)
+      if (allocated(pixcount)) deallocate(pixcount)
+      if (allocated(rawimg))   deallocate(rawimg)
+      if (allocated(corimg))   deallocate(corimg)
+      return
+      end
+
+      subroutine airs_lines(filenm, nmaxpix, nrscanlines)
+      implicit none
+      integer*4 nmaxpix, nrscanlines
+      character*(*) filenm
+c
+      integer*4 lun, ios
+      integer*2, allocatable :: inbuf(:)
+c
+      call get_lun(lun)
+      if (.not.allocated(inbuf)) allocate(inbuf(nmaxpix))
+      open (unit=lun,file=filenm, access='direct',form='unformatted', recl=nmaxpix*2)
+      nrscanlines = 0
+      do while (.true.)
+        read (lun,rec=nrscanlines+1, iostat=ios) inbuf
+        if (ios.ne.0) goto 1
+        nrscanlines = nrscanlines + 1
+      enddo
+ 1    continue
+c
+      close (unit=lun)
+      call free_lun(lun)
+      if (allocated(inbuf)) deallocate(inbuf)
+      return
+      end
+
+      subroutine airs_displacement(displace, nmaxpix, nlines)
+      implicit none
+      integer*4 nmaxpix, nlines
+      integer*4 displace(nmaxpix, nlines)
+c
+      integer*4 i, j, nsat_pix, i_arg, init
+      integer*2 npos
+      real*4 rpos, rzoom1, rzoom9, rzoom
+      logical swdebug
+      character*250 argstring
+      data init/0/
+c
+      save init
+c
+      swdebug         = .false.
+c
+      rzoom1 = 1.000
+      rzoom9 = 0.976
+      nsat_pix = nmaxpix
+c-- If need be override these parameters on the command line to allow finding optimum displacement parameters
+      do i_arg = 2, 20
+        call getarg(i_arg, argstring)
+        if (index(argstring(1:lnblnk(argstring)),'rzoom1=').ne.0) then
+          call string_to_r4(argstring(index(argstring,'rzoom1=')+7:lnblnk(argstring)), npos, rzoom1)
+          write (*,'(''rzoom1                                   : '',F10.3)') rzoom1
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'rzoom9=').ne.0) then
+          call string_to_r4(argstring(index(argstring,'rzoom9=')+7:lnblnk(argstring)), npos, rzoom9)
+          write (*,'(''rzoom9                                   : '',F10.3)') rzoom9
+        endif
+        if (index(argstring(1:lnblnk(argstring)),'debug').ne.0) swdebug = .true.
+      enddo
+c
+      do j = 0, nlines - 1
+        rzoom = rzoom1 - float(j) * ((rzoom1-rzoom9)/float(nlines - 1))
+        do i = (nmaxpix / 2) - 1, 1, -1
+          rpos = abs((dble(2*i)/dble(nsat_pix)) - 1.0D0)
+          displace(i, j + 1) = nmaxpix - nint((rpos * rzoom + 1.0) * float(nsat_pix) / 2.)
+c          write (*,'(2I5,F10.3,I5)') i, j, rpos, displace (i,j+1)
+        enddo
+        do i = (nmaxpix / 2), nmaxpix
+          rpos = abs((dble(2*i)/dble(nsat_pix)) - 1.0D0)
+          displace(i, j + 1) = nint((rpos * rzoom + 1.0) * float(nsat_pix) / 2.)
+c          write (*,'(2I5,F10.3,I5)') i, j, rpos, displace (i,j+1)
+        enddo
+      enddo
+      if (swdebug.and.init.eq.0) then
+        init = 1
+c        call displace_plot(displace, nmaxpix, nlines)
+      endif
+      return
+      end
+
       subroutine deproject_help()
 c
       write (*,'(''Run the program as follows: '')')

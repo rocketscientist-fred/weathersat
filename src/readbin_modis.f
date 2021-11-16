@@ -962,6 +962,39 @@ c-- end of bowtie correction
      *            outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-221'//'.png'
             write (*,*) command(1:lnblnk(command))
             call system(command(1:lnblnk(command)))
+c-- Try and generate RGB from R=2 G=1 B=1 - (2-1)
+            do i = 1, 3
+              call get_lun(lunband(i))
+            enddo
+            do i = 1, 2
+              nrecl(i) = 5416
+              write (cband,'(I2.2)') i
+              open (unit=lunband(i),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-band'//cband//'.dat.cor', access='direct',form='unformatted',recl=nrecl(i)*2)
+            enddo
+            call correct_init(710.0,110.0, 5416, index_correct, 10000, ncorrect_pix)
+            open (unit=lunband(3),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-rgb.rgb',form='unformatted', access='direct',recl=2*ncorrect_pix*6)
+            close (unit=lunband(3),status='delete', iostat=ios)
+            open (unit=lunband(3),file=outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-rgb.rgb',form='unformatted', access='direct',recl=2*ncorrect_pix*6)
+            do i = 1, min(nlines(1), nlines(2))
+              do j = 1, 2
+                call read_buffer(lunband(j), i, bwbuf(1,j), nrecl(j))
+              enddo
+              do j = 1, 5416
+                rgbbuf(1,j) =     bwbuf(j,2)
+                rgbbuf(2,j) =     bwbuf(j,1)
+                rgbbuf(3,j) = max(int(bwbuf(j,2) - 1.0 * (bwbuf(j,2) - bwbuf(j,1))),0)
+              enddo
+              call correct_apply(rgbbuf, 3, 5416, rgbbuf_correct, 3, 2 * ncorrect_pix, index_correct, ncorrect_pix, lunband(3), i)
+            enddo
+            do i = 1, 3
+              close (unit=lunband(i))
+              call free_lun(lunband(i))
+            enddo
+            write (command,'(''convert -depth 16 -endian lsb -size '',I5.5,''x'',I5.5,'' rgb:'',a,'' -equalize -depth 16 '',a)') 2*ncorrect_pix, min(nlines(1),nlines(2)), 
+     *            outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-rgb.rgb', 
+     *            outstring(1:lnblnk(outstring))//argstring(i_dir+1:i_ext-1)//'-rgb'//'.png'
+            write (*,*) command(1:lnblnk(command))
+            call system(command(1:lnblnk(command)))
           endif
 c-- End of quick-and-dirty earth curvature corrected RGB=221 image here
         endif
