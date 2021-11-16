@@ -1,8 +1,27 @@
-This directory contains the source files for HRPT and (AQUA) MODIS reading.
-(And a beta version of some tracking s/w using what I call look-ahead)
+This directory contains the source files for HRPT and (AQUA) MODIS data 
+processing, using a map-/geo-projection approach.
 
-If you don't read this with attention, as well as the ./hrpt.exe --help 
-output, you will fail to successfully run the s/w.
+Also contained are the programs to process the .bin files of the X-band 
+instruments (MERSI) on FY3B, FY3D and FY3E. These programs attempt to 
+do:
+- Data reading
+- Fixed pattern removal
+- Mirror side correction
+- (pseudo) truecolour image generation
+
+(There also is a beta version of some tracking s/w using what I call 
+look-ahead, it specifically targets a SPID RAS/HR rotor with an MD-02 or 
+MD-01 controller)
+
+If you don't read this README with attention, as well as the 
+
+./hrpt.exe --help 
+
+output, you will (!!) fail to successfully run the s/w. Especially 
+the environment variables described below are crucial !!!!
+
+For the MERSI data processing there are specific instructions at the end 
+of this file.
 
 First and most important - it is not at all difficult to make the 
 software crash - I tried to make it robust, but it has many options 
@@ -15,7 +34,10 @@ possible but does not support the large memory model and would thus
 not enable processing (AQUA) Modis imagery.
 For WSL installation instructions : see below.
 
-Inside the UNIX environment you need gfortran and ImageMagick.
+Inside the UNIX environment you need gcc, gfortran, ImageMagick and gmt.
+This can be installed using (Ubuntu):
+
+sudo apt-get install gcc gfortran imagemagick gmt
 
 If your windows machine has < 16 GByte of memory you might not be
 able to use the 'large' memory model (see below) - if that is the case 
@@ -186,15 +208,14 @@ with panmodis.txt containing :
 This somewhat silly construct is because it uses the batch/merge concept that already 
 was built in to the S/W.
 
-I will try to answer questions you have, but you should realise I do have a busy 
-daytime job and often am travelling. Also, most likely I will need a copy of your 
+I will try to answer questions you have. Also, most likely I will need a copy of your 
 file to try and reproduce the problem.
 
 Finally, the s/w is reasonably fast (a few minutes per HRPT file), but an AQUA MODIS 
 true colour with the modispan option easily takes 45 minutes and if you add sharpen, 
 add another hour (but its worth it !!)
 
-
+In WSL2 the s/w runs significantly faster than in WSL1.
 
 TLETRACK Software:
 
@@ -214,9 +235,9 @@ the lookahead feature currently is not useable.
 
 DEPROJECT Software:
 
-The deproject software allows to coordinate a raw RGB image (png or jpg) for Earth 
-curvature AND - for AQUA and TERRA MODIS and FY3B MERSI-1 and FY3D MERSI-2 to 
-perform the Bow-Tie (approximate but pretty good) correction.
+The deproject software allows to correct a raw RGB image (png or jpg) for Earth 
+curvature AND - for AQUA and TERRA MODIS and FY3B MERSI-1, FY3D MERSI-2 and 
+FY3E MERSI-LL to perform the Bow-Tie (approximate but pretty good) correction.
 
 ./deproject --help
 
@@ -235,6 +256,30 @@ RGB (!) images whose # of image lines is (and HAS TO BE) an integer multiple of
 add the relevant parameter (see the help text).
 If you just wish to use the earth curvature correction the 40 lines multiple requirement 
 does not apply.
+
+
+FY3xREAD Software:
+
+The 3 programs fy3bread.exe, fy3dread.exe and fy3eread.exe expect .bin files as produced 
+by the s/w of @aang254 (Twitter) or @LucMillette (Twitter).
+These programs internally call the deproject software to apply earth curvature and 
+Bow-Tie corrections.
+
+The usage for the miscalaneous missions would be:
+
+./fy3bread.exe /mnt/c/FY3B/mersi.bin correct
+
+or:
+
+./fy3dread.exe /mnt/c/FY3D/mersi.bin correct
+
+or:
+
+./fy3eread.exe /mnt/c/FY3E/mersi.bin correct invert
+
+The invert switch is needed for FY3E to apply the fixed line pattern corrections in a 
+(reasonably) successfull way. The output of these programs can be found in the directory 
+where the input file resides.
 
 
 

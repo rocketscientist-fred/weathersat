@@ -29,4 +29,10 @@ echo "gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmo
 gfortran -o polarstereo.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/polarstereo.f
 echo "gfortran -o deproject.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/deproject.f plotsoft.o"
 gfortran -o deproject.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/deproject.f plotsoft.o
+echo "gfortran -o fy3bread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3bread.f plotsoft.o"
+gfortran -o fy3bread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3bread.f plotsoft.o
+echo "gfortran -o fy3dread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3dread.f plotsoft.o"
+gfortran -o fy3dread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3dread.f plotsoft.o
+echo "gfortran -o fy3eread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3eread.f plotsoft.o"
+gfortran -o fy3eread.exe -ffixed-line-length-350 -fno-range-check -mcmodel=medium -m64 -malign-double -O2 ./src/fy3eread.f plotsoft.o
 rm *.o
