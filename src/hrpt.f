@@ -875,11 +875,11 @@ c-- Remember that the IFOV (= pixel size) is BIGGER than the sampling interval !
 c-- Copy from AQUA above
 c-- Remember (!!!) thetascan is defined for a southern pass - the sign reversal for a Northern pass is done further down in the code !
         if (.not.swlinedelay) then
-          ilinedelay   = -15
+          ilinedelay   = -22
           swlinedelay  = .true.
         endif
-        thetascan    =  0.100D0
-        etascan      =  0.0D0
+        thetascan    = -0.080D0
+        etascan      = -0.050D0
 c-- Switch on the bowgamma => the best solution over a linear 0.18 - 0.42 bowtie slope
         if (.not.swbowgamma) then
           swbowgamma = .true.

@@ -8,13 +8,13 @@ c
       parameter (nmaxpass=1000, nmaxpointing=40000, nsatmax=50, nmaxcross=50)
 c
       real*8    sat_az_pass(nmaxpointing,nmaxpass)    , sat_el_pass(nmaxpointing,nmaxpass)    , time_pass(nmaxpointing,nmaxpass)
-      real*8    sat_az_track(nmaxpointing,nmaxpass)   , sat_el_track(nmaxpointing,nmaxpass)   , time_track(nmaxpointing,nmaxpass)
       real*8    sat_az_track_la(nmaxpointing,nmaxpass), sat_el_track_la(nmaxpointing,nmaxpass), time_track_la(nmaxpointing,nmaxpass)
       real*8    sat_pass_start(nmaxpass), sat_pass_end(nmaxpass), sat_el_max_pass(nmaxpass)
       integer*4 npointspass(nmaxpass), n_track(nmaxpass), n_track_la(nmaxpass), i_sat_prio(nsatmax), i_start(nsatmax), i_end(nsatmax)
       integer*4 nrpasses, key(nmaxpass), ok(nmaxpass), sat_pass_prio(nmaxpass)
-      integer*1 ovlflag(nmaxpointing)
+      integer*1 ovlflag(nmaxpointing), sat_co_pass(nmaxpointing,nmaxpass), sat_co_track_la(nmaxpointing,nmaxpass)
       character*20 c_sat_pass(nmaxpass), c_sat_use(nsatmax), c_sat_type(nsatmax)
+      logical   swns(nmaxpass)
 c-- Diagnostic variables - can be deleted if plots no longer needed
       integer*4 i1, i2, i3, i4, i5, i6
       real*8    angle1, angle2, azpark, elpark, aztst, eltst
@@ -22,7 +22,8 @@ c
       real*8    doy_tle, time, ro(3), vo(3), long, lat, theta0g, time_start, sat_az, sat_el, rsc, sat_el_max, time_max, el_track_min
       real*8    torad, todeg, track_angle, x1, y1, z1, x2, y2, z2, time_save, secsubsteps, time_offset, rsc1, rsc2, rsc3, rsc4, elpriothresh
       real*8    azrate, elrate, azoff, eloff, azrange(2), elrange(2), sunaz, sunel, sunaz1, sunel1, sunaz2, sunel2, anglesun, sunrate
-      real*8    suntim1, suntim2, sunrepoint, sunahead, elpower, azpower, delta_t_la, azhor, elhor, azpoint, elpoint
+      real*8    suntim1, suntim2, sunrepoint, sunahead, elpower, azpower, delta_t_la, azhor, elhor, azpoint, elpoint, latsav
+      real*8    sat_co_az, sat_co_el, rsc5, rsc6
 c-- Raster variables
       real*8    grid_az, grid_el, grid_az_range, grid_el_range, grid_az_step, grid_el_step, grid_delta_t, az_cmd, el_cmd, t_move, az1, el1, azavg, elavg
       integer*4 ncrossaz, ncrossel
@@ -31,14 +32,15 @@ c-- Raster variables
 c--
       integer*4 dattim(8), luntle, iyr_tle, doy, i, j, k, l, ihr, imn, i_year, i_month, i_day, i_pass, i_track, lunsat, nsatuse, ios, isat
       integer*4 i_arg1, i_arg, ihr1, ihr2, ihr3, ihr4, imn1, imn2, imn3, imn4, ihr_ahead, lunhor, ih1, ih2, ih3, ih4, i_mask1, i_mask2
+      integer*4 ihr5, imn5, ihr6, imn6, i_co1, i_co2
       integer*2 npos
-      logical foundtle, swdebug, swdiag, swlive, swallowflip, swnoovl, swboth, swoffset, swazrange, swelrange, swtiltcor, swsun, swcalib, swazelalt, swhorcmd
-      logical swnoload, swfound, swpoint, swdoublec, swjumpin, swhmask, check_horizon
+      logical foundtle, swdebug, swlive, swallowflip, swnoovl, swboth, swoffset, swazrange, swelrange, swtiltcor, swsun, swcalib, swazelalt, swhorcmd
+      logical swnoload, swfound, swpoint, swdoublec, swjumpin, swhmask, check_horizon, swcovis
       character*1    csq, cdq
-      character*3    c_month(12)
+      character*3    c_month(12), cloc
       character*5    c_zone
       character*8    c_date, c_datvis
-      character*10   c_time, c_horcmd, c_datehor1, c_datehor2, c_time1, c_time2
+      character*10   c_time, c_horcmd, c_datehor1, c_datehor2, c_time1, c_time2, c_time3, c_time4
       character*17   c_datehormatch
       character*20   c_sat
       character*50   c_file, c_command, cfmt, clong, clat
@@ -120,7 +122,6 @@ c
 c-- Use 0.05 sec time steps (required for X-band)
       secsubsteps     = 20.0D0
       swdebug         = .false.
-      swdiag          = .false.
       swlive          = .false.
       swallowflip     = .false.
       swnoovl         = .false.
@@ -156,6 +157,7 @@ c-- ELRate @ 70% max power is 3.6 deg / sec - a tiny bit lower then expected - p
       swdoublec       = .false.
       swjumpin        = .false.
       swhmask         = .false.
+      swcovis         = .false.
 c-- If two satellites passes have a conflict and their priorities differ by 1 and their max elevations are above this limit : the max elevation wins
       elpriothresh    = 30.0D0
       delta_t_la      = 0.0D0
@@ -165,6 +167,7 @@ c
         sat_pass_start(i) = 0.0D0
         sat_pass_end(i)   = 0.0D0
         ok(i)             = 1
+        swns(i)           = .false.
       enddo
       call getarg(1, argstring)
       if (index(argstring(1:lnblnk(argstring)),'-help').ne.0) then
@@ -231,7 +234,6 @@ c
       do k = i_arg1, 30
         call getarg(k, argstring)
         if (index(argstring(1:lnblnk(argstring)),'debug').ne.0)  swdebug      = .true.
-        if (index(argstring(1:lnblnk(argstring)),'diag').ne.0)   swdiag       = .true.
         if (index(argstring(1:lnblnk(argstring)),'beam=').ne.0) then
           call string_to_r8(argstring(index(argstring,'beam=')+5:lnblnk(argstring)), npos, track_angle)
           write (*,'(''Modified track angle                     : '',F10.3)') track_angle
@@ -388,6 +390,11 @@ c
         if (index(argstring(1:lnblnk(argstring)),'doublec').ne.0) swdoublec = .true.
         if (index(argstring(1:lnblnk(argstring)),'jumpin').ne.0) swjumpin = .true.
         if (index(argstring(1:lnblnk(argstring)),'hmask').ne.0) swhmask = .true.
+        if (index(argstring(1:lnblnk(argstring)),'covis=').ne.0) then
+          swcovis = .true.
+          cloc = argstring(7:9)
+          if (cloc.ne.'SVB'.and.cloc.ne.'KIR') stop '** Unknown co-visibility location **'
+        endif
       enddo
 c-- Just execute a simple point and stare and exit
       if (swpoint) then
@@ -701,7 +708,6 @@ c-- Start the loop over the satellites
         read (tlestring(21:32),*) doy_tle
         close (unit=luntle)
         if (swdebug) write (*,'(''TLE Reference date : '',I5,2x,F8.2)') iyr_tle, doy_tle
-c        call map_azel_init()
         call sgp4_init(ro, vo, long, lat)
         time        = time_start
         time_offset = 0.0D0
@@ -714,7 +720,7 @@ c        call map_azel_init()
             time_offset = time_offset + 86400.0D0
           endif
           call run_TLE(time, doy, ro, vo, long, lat, theta0g, doy_tle, iyr_tle, dattim(1))
-          call azel(long, lat, ro, sat_az, sat_el, swazelalt)
+          call azel(long, lat, ro, sat_az, sat_el, swazelalt, 'LOC')
           if (sat_el.gt.0.0D0) then
             if (i_pass.eq.0) then
               i_pass                   = 1
@@ -732,16 +738,23 @@ c        call map_azel_init()
               goto 6
             endif
             npointspass(nrpasses) = npointspass(nrpasses) + 1
+c- Crude determination whether a pass is S => N or N => S
+            if (npointspass(nrpasses).eq.1) latsav = lat
+            if (npointspass(nrpasses).eq.nint(secsubsteps).and.lat.lt.latsav) swns(nrpasses) = .true.
+c
             call doytodate(doy, dattim(1), c_datvis)
-c            call map_azel_place(sat_az, sat_el)
             ihr = int(time/3600.0D0)
             imn = (int(time - dble(ihr)*3600.0D0)/60.0D0)
             rsc = time - dble(ihr)*3600.0D0 - imn * 60.0D0
             sat_az_pass(npointspass(nrpasses), nrpasses) = sat_az
             sat_el_pass(npointspass(nrpasses), nrpasses) = sat_el
             time_pass  (npointspass(nrpasses), nrpasses) = time + dattim(4) * 60.0D0
-c          write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5)') sat_az, sat_el, c_datvis, ihr, imn, rsc, doy
             if (swdebug.and.(time-dble(int(time))).lt.0.001D0) write (*,'(2F10.3,1x,a8,1x,2I5,F10.3, I5, I6, 2F10.3)') sat_az, sat_el, c_datvis, ihr, imn, rsc, doy, npointspass(nrpasses), long, lat
+            if (swcovis) then
+              call azel(long, lat, ro, sat_co_az, sat_co_el, swazelalt, cloc)
+              if (sat_co_el.gt.3.0D0) sat_co_pass(npointspass(nrpasses), nrpasses) = 1
+              if (sat_co_el.le.3.0D0) sat_co_pass(npointspass(nrpasses), nrpasses) = 0
+            endif
           else
             if (i_pass.eq.1) then
               if (sat_pass_end(nrpasses).eq.0.0D0) sat_pass_end(nrpasses) = time  + time_offset + dattim(4) * 60.0D0
@@ -754,7 +767,6 @@ c-- Try to eliminate the 0 second passes that creeped in after the change to the
         enddo
         i_end(isat) = nrpasses
         call sgp4_end()
-c        call map_azel_write(command)
         write (*,*)
         write (*,'(''Pass # Secs   Max El   Time of max El        SAT ID       #LA Commands'')')
         do i = i_start(isat), i_end(isat)
@@ -774,48 +786,6 @@ c
           ihr = int(time_max/3600.0D0)
           imn = (int(time_max - dble(ihr)*3600.0D0)/60.0D0)
           rsc = time_max - dble(ihr)*3600.0D0 - imn * 60.0D0
-c-- Reactive tracking - the usual way
-          if (.not.swboth) goto 10
-          i_track = 0
-          do j = 1, npointspass(i)
-            if (sat_el_pass(j,i).gt.el_track_min.and.i_track.eq.0) then
-              i_track                    = 1
-              n_track(i)                 = 1
-              sat_az_track(n_track(i),i) = sat_az_pass(j,i)
-              sat_el_track(n_track(i),i) = sat_el_pass(j,i)
-              time_track(n_track(i),i)   = time_pass(j,i)
-            endif
-            if (sat_el_pass(j,i).lt.el_track_min.and.i_track.eq.1) then
-              i_track                    = 0
-              n_track(i)                 = n_track(i) + 1
-              sat_az_track(n_track(i),i) = sat_az_pass(j,i)
-              sat_el_track(n_track(i),i) = sat_el_pass(j,i)
-              time_track(n_track(i),i)   = time_pass(j,i)
-            endif
-            if (i_track.eq.1) then
-              x1 = cos(torad*sat_az_track(n_track(i),i)) * cos(torad*sat_el_track(n_track(i),i))
-              y1 = sin(torad*sat_az_track(n_track(i),i)) * cos(torad*sat_el_track(n_track(i),i))
-              z1 =                                         sin(torad*sat_el_track(n_track(i),i))
-              x2 = cos(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-              y2 = sin(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-              z2 =                               sin(torad*sat_el_pass(j,i))
-              if (todeg * acos(min(max((x1*x2 + y1*y2 + z1*z2),-1.0D0),1.0D0)).ge.track_angle) then
-                n_track(i)                 = n_track(i) + 1
-                sat_az_track(n_track(i),i) = sat_az_pass(j,i)
-                sat_el_track(n_track(i),i) = sat_el_pass(j,i)
-                time_track(n_track(i),i)   = time_pass(j,i)
-              endif
-            endif
-          enddo
-          if (swdebug.and.n_track(i).gt.0) write (*,'(''Reactive tracking'')')
-          if (swdebug.and.n_track(i).gt.0) write (*,'(''Pointing #  Az          El     Time'')')
-          do j = 1, n_track(i)
-            ihr = int(time_track(j,i)/3600.0D0)
-            imn = (int(time_track(j,i) - dble(ihr)*3600.0D0)/60.0D0)
-            rsc = time_track(j,i) - dble(ihr)*3600.0D0 - imn * 60.0D0
-            if (swdebug) write (*,'(I5,3x,2F10.3,2I5,F10.3)') j, sat_az_track(j,i), sat_el_track(j,i), ihr, imn, rsc
-          enddo
- 10       continue
 c-- Pro-active tracking - look ahead (arrays with _la at end of name)
           i_track = 0
           j       = 0
@@ -827,6 +797,9 @@ c-- Pro-active tracking - look ahead (arrays with _la at end of name)
               sat_az_track_la(n_track_la(i),i) = sat_az_pass(j,i)
               sat_el_track_la(n_track_la(i),i) = sat_el_pass(j,i)
               time_track_la(n_track_la(i),i)   = time_pass(j,i)
+              if (swcovis) then
+                sat_co_track_la(n_track_la(i),i) = sat_co_pass(j,i)
+              endif
             endif
             if (sat_el_pass(j,i).lt.el_track_min.and.i_track.eq.1) then
               i_track                          = 0
@@ -834,6 +807,9 @@ c-- Pro-active tracking - look ahead (arrays with _la at end of name)
               sat_az_track_la(n_track_la(i),i) = sat_az_pass(j,i)
               sat_el_track_la(n_track_la(i),i) = sat_el_pass(j,i)
               time_track_la(n_track_la(i),i)   = time_pass(j,i)
+              if (swcovis) then
+                sat_co_track_la(n_track_la(i),i) = sat_co_pass(j,i)
+              endif
             endif
             if (i_track.eq.1) then
               x1 = cos(torad*sat_az_track_la(n_track_la(i),i)) * cos(torad*sat_el_track_la(n_track_la(i),i))
@@ -859,6 +835,9 @@ c-- Find the full angle point and store with the time of the half-angle point - 
                     sat_az_track_la(n_track_la(i),i) = sat_az_pass(j,i)
                     sat_el_track_la(n_track_la(i),i) = sat_el_pass(j,i)
                     time_track_la(n_track_la(i),i)   = time_save
+                    if (swcovis) then
+                      sat_co_track_la(n_track_la(i),i) = sat_co_pass(j,i)
+                    endif
                     goto 1
                   endif
                 enddo
@@ -891,61 +870,6 @@ c-- Print and also try to eliminate the 0 second passes that creeped in after th
         enddo
       enddo
       call free_lun(luntle)
-c
-c-- Diagnostics section - plot difference angles dish <-> sat for reactive and pro-active (look ahead) pointing
-c
-      if (.not.swdiag) goto 3
-      do i = 1, nrpasses
-        write (*,'(''Diagnostic data for pass '',I3)') i
-        write (*,*)
-        write (*,'(''                                                  Delta-   Delta-'')')
-        write (*,'(''Serial #  Az         El     Time                  angle    angle LA'')')
-        if (n_track(i).gt.0) then
-          do j = 1, npointspass(i)
-            i1 = 1
-            i2 = n_track(i)
-            do while (i2-i1.gt.1)
-              i3 = (i2 + i1) / 2
-              if (time_pass(j,i).gt.time_track(i3,i)) then
-                i1 = i3
-              else
-                i2 = i3
-              endif
-            enddo
-c            write (*,*) i, j, i1, i2, i3, time_pass(j,i), time_track(i1,i), time_track(i2,i)
-c            read (*,*)
-            x1 = cos(torad*sat_az_track(i1,i)) * cos(torad*sat_el_track(i1,i))
-            y1 = sin(torad*sat_az_track(i1,i)) * cos(torad*sat_el_track(i1,i))
-            z1 =                                 sin(torad*sat_el_track(i1,i))
-            x2 = cos(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-            y2 = sin(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-            z2 =                               sin(torad*sat_el_pass(j,i))
-            angle1 = todeg * acos(min(max((x1*x2 + y1*y2 + z1*z2),-1.0D0),1.0D0))
-            i4 = 1
-            i5 = n_track_la(i)
-            do while (i5-i4.gt.1)
-              i6 = (i5 + i4) / 2
-              if (time_pass(j,i).gt.time_track_la(i6,i)) then
-                i4 = i6
-              else
-                i5 = i6
-              endif
-            enddo
-            x1 = cos(torad*sat_az_track_la(i4,i)) * cos(torad*sat_el_track_la(i4,i))
-            y1 = sin(torad*sat_az_track_la(i4,i)) * cos(torad*sat_el_track_la(i4,i))
-            z1 =                                    sin(torad*sat_el_track_la(i4,i))
-            x2 = cos(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-            y2 = sin(torad*sat_az_pass(j,i)) * cos(torad*sat_el_pass(j,i))
-            z2 =                               sin(torad*sat_el_pass(j,i))
-            angle2 = todeg * acos(min(max((x1*x2 + y1*y2 + z1*z2),-1.0D0),1.0D0))
-            ihr = int(time_pass(j,i)/3600.0D0)
-            imn = (int(time_pass(j,i) - dble(ihr)*3600.0D0)/60.0D0)
-            rsc = time_pass(j,i) - dble(ihr)*3600.0D0 - imn * 60.0D0
-            write (*,'(I5,2F10.3,2I5,3F10.3)') j, sat_az_pass(j,i), sat_el_pass(j,i), ihr, imn, rsc, angle1, angle2
-          enddo
-        endif
-      enddo
- 3    continue
 c-- Sort on the start times of the passes and determine if there is overlap between passes
 c-- If so apply priorities to eliminate conflicts and re-print a list of passes. 
       do i = 1, nrpasses
@@ -1004,9 +928,6 @@ c
         enddo
  4      continue
       enddo
-c      do i = 1, nrpasses
-c        if (sat_el_max_pass(key(i)).gt.el_track_min) write (*,*) key(i), sat_pass_start(i), sat_pass_end(key(i)), c_sat_pass(key(i))
-c      enddo
       write (*,*)
       do i = 1, nrpasses
         if (ok(key(i)).ge.1) then
@@ -1020,13 +941,30 @@ c      enddo
             i_mask1 = -1
             i_mask2 = -1
             do j = 1, n_track_la(key(i))
-c              write (*,*) key(i), j, sat_az_track(j, key(i)), sat_el_track(j, key(i))
-c              read (*,*)
               if (check_horizon(sat_az_track_la(j, key(i)), sat_el_track_la(j, key(i))).and.i_mask1.lt.0) i_mask1 = j
             enddo
             do j = n_track_la(key(i)), 1, -1
               if (check_horizon(sat_az_track_la(j, key(i)), sat_el_track_la(j, key(i))).and.i_mask2.lt.0) i_mask2 = j
             enddo
+c-- If co-visibility requested, find the visibility window
+            if (swcovis) then
+              i_co1 = -1
+              i_co2 = -1
+              do j = 1, n_track_la(key(i))
+                if (sat_co_track_la(j, key(i)).eq.1.and.i_co1.lt.0) i_co1 = j
+              enddo
+              do j = n_track_la(key(i)), 1, -1
+                if (sat_co_track_la(j, key(i)).eq.1.and.i_co2.lt.0) i_co2 = j
+              enddo
+              if (i_co2.le.i_mask1.or.i_co1.gt.i_mask2) then
+                i_co1 = -1
+                i_co2 = -1
+              else
+                i_co1 = max(i_mask1, i_co1)
+                i_co2 = min(i_mask2, i_co2)
+              endif
+            endif
+c--
             if (i_mask1.eq.-1.or.i_mask2.eq.-1) then
               write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' No El commands above Horizon mask - skipping pass'')') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
             else
@@ -1038,12 +976,52 @@ c              read (*,*)
               rsc4 =     mod(time_track_la(min(i_mask2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr4)*3600.0D0 - imn4 * 60.0D0
               write (c_time1,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr3, imn3, rsc3
               write (c_time2,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr4, imn4, rsc4
-              write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' Visible from : '',a,'' To : '',a)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i)), c_time1, c_time2
+              if (swcovis.and.(.not.(i_co1.eq.-1.or.i_co2.eq.-1))) then
+                ihr5 = int(mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) / 3600.0D0)
+                imn5 =    (mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) - dble(ihr5)*3600.0D0)/60.0D0
+                rsc5 =     mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) - dble(ihr5)*3600.0D0 - imn5 * 60.0D0
+                ihr6 = int(mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) / 3600.0D0)
+                imn6 =    (mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr6)*3600.0D0)/60.0D0
+                rsc6 =     mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr6)*3600.0D0 - imn6 * 60.0D0
+                write (c_time3,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr5, imn5, rsc5
+                write (c_time4,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr6, imn6, rsc6
+                write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' Visible from : '',a,'' To : '',a,'' Co-Visibility from : '',a,'' To : '',a)') 
+     *            ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i)), c_time1, c_time2, c_time3, c_time4
+              else
+                write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' Visible from : '',a,'' To : '',a)') 
+     *            ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i)), c_time1, c_time2
+              endif
+              call azel_plot(sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), i_mask1, i_mask2, n_track_la(key(i)), ihr3, imn3, rsc3, ihr4, imn4, rsc4, swhmask, swlive, c_sat_pass(key(i)), sat_pass_start(i), swns(key(i)), sat_co_track_la(1,key(i)), swcovis, cloc)
             endif
           else
-            write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,A)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
+            if (swcovis) then
+              i_co1 = -1
+              i_co2 = -1
+              do j = 1, n_track_la(key(i))
+                if (sat_co_track_la(j, key(i)).eq.1.and.i_co1.lt.0) i_co1 = j
+              enddo
+              do j = n_track_la(key(i)), 1, -1
+                if (sat_co_track_la(j, key(i)).eq.1.and.i_co2.lt.0) i_co2 = j
+              enddo
+            endif
+            if (swcovis.and.(.not.(i_co1.eq.-1.or.i_co2.eq.-1))) then
+              ihr5 = int(mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) / 3600.0D0)
+              imn5 =    (mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) - dble(ihr5)*3600.0D0)/60.0D0
+              rsc5 =     mod(time_track_la(max(i_co1-1,1)                 , key(i)),86400.0D0) - dble(ihr5)*3600.0D0 - imn5 * 60.0D0
+              ihr6 = int(mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) / 3600.0D0)
+              imn6 =    (mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr6)*3600.0D0)/60.0D0
+              rsc6 =     mod(time_track_la(min(i_co2+1,n_track_la(key(i))), key(i)),86400.0D0) - dble(ihr6)*3600.0D0 - imn6 * 60.0D0
+              write (c_time3,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr5, imn5, rsc5
+              write (c_time4,'(I2.2,'':'',I2.2,'':'',F4.1)') ihr6, imn6, rsc6
+              write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a,'' Co-Visibility from : '',a,'' To : '',a)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i)), c_time3, c_time4
+            else
+              write (*,'(I4,F10.3,2(2I5,F10.3,F10.3,2x),3x,a)') ok(key(i)), sat_el_max_pass(key(i)), ihr1, imn1, rsc1, sat_az_track_la(1,key(i)), ihr2, imn2, rsc2, sat_az_track_la(n_track_la(key(i)),key(i)), c_sat_pass(key(i))
+            endif
+c-- Try and plot the azel profiles
+            call azel_plot(sat_az_track_la(1,key(i)), sat_el_track_la(1,key(i)), 1, n_track_la(key(i)), n_track_la(key(i)), ihr1, imn1, rsc1, ihr2, imn2, rsc2, swhmask, swlive, c_sat_pass(key(i)), sat_pass_start(i), swns(key(i)), sat_co_track_la(1,key(i)), swcovis, cloc)
           endif
         endif
+c-- Try and plot the azel profiles
       enddo
 c-- The tracks have been sorted and conflicts settled - now implement the commanding as an option ?
       write (*,*)
@@ -1102,10 +1080,11 @@ c
       return
       end
 
-      subroutine azel(long, lat, ro, az, el, swazelalt)
+      subroutine azel(long, lat, ro, az, el, swazelalt, cloc)
       implicit none
-      real*8 long, lat, ro(3), az, el
-      logical swazelalt
+      real*8      long, lat, ro(3), az, el
+      logical     swazelalt
+      character*3 cloc
 c
       real*8 xyz(3), lla(3), xyzsat(3), xyzobs(3), a(3), b(3), c1000, torad, todeg, a_par_b(3), a_ortho_b(3), const
       real*8 mylong, mylat
@@ -1117,10 +1096,23 @@ c
       c1000           = 1000.0D0
       torad           = 2.0D0 * dasin(1.0D0) / 180.0D0
       todeg           = 180.0D0 / (2.0D0 * dasin(1.0D0))
-      call getenv('LONG',instring)
-      call string_to_r8(instring(1:lnblnk(instring)), npos, mylong)
-      call getenv('LAT',instring)
-      call string_to_r8(instring(1:lnblnk(instring)), npos, mylat)
+      if (cloc.eq.'LOC') then
+        call getenv('LONG',instring)
+        call string_to_r8(instring(1:lnblnk(instring)), npos, mylong)
+        call getenv('LAT',instring)
+        call string_to_r8(instring(1:lnblnk(instring)), npos, mylat)
+      else
+c- Co-analyse az/el for Svallbard
+        if (cloc.eq.'SVB') then
+          mylong = 15.392766
+          mylat  = 78.230457
+        endif
+c- Co-analyse az/el for Kiruna
+        if (cloc.eq.'KIR') then
+          mylong = 20.966881
+          mylat  = 67.858429
+        endif
+      endif
 c
       xyz(1) = ro(1) * c1000
       xyz(2) = ro(2) * c1000
@@ -1184,19 +1176,160 @@ c
       return
       end
 
+      subroutine azel_plot(az, el, i1, i2, n, ihr1, imn1, rsc1, ihr2, imn2, rsc2, swhmask, swlive, csat, tstart, swns, co, swcovis, cloc)
+      implicit none
+      logical   swhmask, swlive, swns, swcovis
+      integer*4 i1, i2, n, ihr1, imn1, ihr2, imn2
+      real*8    az(n), el(n), rsc1, rsc2, tstart
+      integer*1 co(n)
+      character*3 cloc
+      character*(*) csat
+c
+      logical        check_horizon
+      integer*1      R, G, B
+      integer*4      dattim(8), i, doy
+      character*1    csq, cdq
+      character*5    c_zone
+      character*6    c_time1, c_time2, cns
+      character*8    c_date, c_time3, c_time4
+      character*10   c_time, c_date1
+      character*250  tledir, cstring
+      character*1000 command
+c
+      call date_and_time(c_date, c_time, c_zone, dattim)
+      if (tstart.gt.86400.0D0) then
+        call datetodoy(dattim(1), dattim(2), dattim(3), doy)
+        doy = doy + int(tstart/86400.0D0)
+        call doytodate(doy, dattim(1), c_date)
+      endif
+      c_date1 = c_date(1:4)//'-'//c_date(5:6)//'-'//c_date(7:8)
+      write (c_time1(1:2),'(I2.2)') ihr1
+      write (c_time1(3:4),'(I2.2)') imn1
+      write (c_time1(5:6),'(I2.2)') nint(rsc1)
+      write (c_time2(1:2),'(I2.2)') ihr2
+      write (c_time2(3:4),'(I2.2)') imn2
+      write (c_time2(5:6),'(I2.2)') nint(rsc2)
+      c_date1 = c_date(1:4)//'-'//c_date(5:6)//'-'//c_date(7:8)
+      write (c_time3,'(I2.2,'':'',I2.2,'':'',I2.2)') ihr1, imn1, nint(rsc1)
+      write (c_time4,'(I2.2,'':'',I2.2,'':'',I2.2)') ihr2, imn2, nint(rsc2)
+      call getenv('TLE',tledir)
+c
+      call map_azel_init()
+      if (swhmask) then
+        r = 'FF'x
+        g = '00'x
+        b = '00'x
+        do i = 1, min(max(1, i1 - 1), n)
+          call map_azel_place(az(i), el(i), r, g, b)
+        enddo
+        do i = min(max(1, i1), n), max(min(i2, n), 1)
+          if (check_horizon(az(i), el(i))) then
+            r = '00'x
+            g = 'FF'x
+            b = '00'x
+            if (swcovis.and.co(i).eq.1) then
+              r = 'FF'x
+              g = '00'x
+              b = 'FF'x
+            endif
+            call map_azel_place(az(i), el(i), r, g, b)
+          else
+            r = 'FF'x
+            g = '00'x
+            b = '00'x
+            call map_azel_place(az(i), el(i), r, g, b)
+          endif
+        enddo
+        r = 'FF'x
+        g = 'FF'x
+        b = '00'x
+        do i = max(min(i2 + 1, n), 1), n
+          call map_azel_place(az(i), el(i), r, g, b)
+        enddo
+        call map_azel_write()
+        csq = char(ichar("'"))
+        cdq = char(ichar('"'))
+        cns = 'S => N'
+        if (swns) cns = 'N => S'
+        cstring = '-pointsize 20 -fill red -draw '//csq//'text 20,20 '//cdq//c_date1//' '//c_time3//' '//c_time4//cdq//csq
+        call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        cstring = '-pointsize 20 -fill red -draw '//csq//'text 20,50 '//csat(1:lnblnk(csat))//csq
+        call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        cstring = '-pointsize 20 -fill red -draw '//csq//'text 20,75 '//cdq//cns//cdq//csq
+        call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        if (swcovis) then
+          cstring = '-pointsize 20 -fill red -draw '//csq//'text 20,100 '//cdq//'covis='//cloc//cdq//csq
+          call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        endif
+        if (swlive) then
+          do i = lnblnk(csat), 1, -1
+            if (csat(i:i).eq.' ') csat(i:i) = '_'
+          enddo
+          write (command,'(''cp satmap-azel.png '',a,a,''_'',a,''_'',a,''_azel_live_'',a,''.png'')') tledir(1:lnblnk(tledir)), c_date, c_time1, c_time2, csat(1:lnblnk(csat))
+        else
+          do i = lnblnk(csat), 1, -1
+            if (csat(i:i).eq.' ') csat(i:i) = '_'
+          enddo
+          write (command,'(''cp satmap-azel.png '',a,a,''_'',a,''_'',a,''_azel_predict_'',a,''.png'')') tledir(1:lnblnk(tledir)), c_date, c_time1, c_time2, csat(1:lnblnk(csat))
+        endif
+        call system(command)
+      else
+        do i = min(max(1, i1), n), max(min(i2, n), 1)
+          r = '00'x
+          g = 'FF'x
+          b = '00'x
+          if (swcovis.and.co(i).eq.1) then
+            r = 'FF'x
+            g = '00'x
+            b = 'FF'x
+          endif
+          call map_azel_place(az(i), el(i), r, g, b)
+        enddo
+c-- To be able to establish the direction of the pass when not using hmask, label the first point red and the last one yellow
+        r = 'FF'x
+        g = '00'x
+        b = '00'x
+        call map_azel_place(az(1), el(1), r, g, b)
+        r = 'FF'x
+        g = 'FF'x
+        b = '00'x
+        call map_azel_place(az(n), el(n), r, g, b)
+        call map_azel_write()
+        csq = char(ichar("'"))
+        cdq = char(ichar('"'))
+        cns = 'S => N'
+        if (swns) cns = 'N => S'
+        cstring = '-pointsize 20 -fill red -draw '//csq//'text 70,50 '//csat(1:lnblnk(csat))//csq
+        call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        cstring = '-pointsize 20 -fill red -draw '//csq//'text 70,75 '//cdq//cns//cdq//csq
+        call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        if (swcovis) then
+          cstring = '-pointsize 20 -fill red -draw '//csq//'text 70,100 '//cdq//'covis='//cloc//cdq//csq
+          call system('convert satmap-azel.png '//cstring(1:lnblnk(cstring))//' satmap-azel.png')
+        endif
+        if (swlive) then
+          write (command,'(''cp satmap-azel.png '',a,a,''_'',a,''_'',a,''_azel_live_'',a,''.png'')') tledir(1:lnblnk(tledir)), c_date, c_time1, c_time2, csat(1:lnblnk(csat))
+        else
+          write (command,'(''cp satmap-azel.png '',a,a,''_'',a,''_'',a,''_azel_predict_'',a,''.png'')') tledir(1:lnblnk(tledir)), c_date, c_time1, c_time2, csat(1:lnblnk(csat))
+        endif
+        call system(command)
+      endif
+c
+      return
+      end
+
       subroutine map_azel_init()
       implicit none
 c--
       integer*4 nazel
       parameter (nazel=1400)
 c--
-      integer*1 mapsline (3,nazel), maps(3,nazel,nazel)
+      integer*1 mapsline (3,nazel), maps(3,nazel,nazel), r, g, b
       integer*4 lun, i, j, ix, iy
       real*8    az, el, torad, todeg
       character*6 cmap
       character*11 csize
       character*500 cstring
-      character*(*) command
 c
       save
 c
@@ -1281,20 +1414,24 @@ c iy is counterintuitive as the image is vertically flipped for display !
       enddo
       return
 c
-      entry map_azel_place(az, el)
+      entry map_azel_place(az, el, r, g, b)
       if (el.gt.0.0) then
         ix = (nazel/2) + int(dsin(az*torad)*dble(nazel/2)*(1.0D0-(el/90.0D0)))
 c iy is counterintuitive as the image is vertically flipped for display !
         iy = (nazel/2) + int(dcos(az*torad)*dble(nazel/2)*(1.0D0-(el/90.0D0)))
         ix = min(max(ix,1),nazel)
         iy = min(max(iy,1),nazel)
-        maps(1,ix,iy) = -1
-        maps(2,ix,iy) =  0
-        maps(3,ix,iy) = -1
+        do i = ix - 1, ix + 1
+          do j = iy - 1, iy + 1
+            maps(1,i,j) = r
+            maps(2,i,j) = g
+            maps(3,i,j) = b
+          enddo
+        enddo
       endif
       return
 c
-      entry map_azel_write(command)
+      entry map_azel_write()
       open (unit=lun, file=cmap//'-azel.rgb', access='direct', form='unformatted', recl=3*nazel)
       do i = 1, nazel
         do j = 1, nazel
@@ -2529,7 +2666,6 @@ c
       write (*,'('' '')')
       write (*,'(''     beam=1.8        beamwidth of dish to be used (in deg)'')')
       write (*,'(''     debug           show the commands that would be issued for reactive and pro-active (look ahead) '')')
-      write (*,'(''     diag            show the az el values at each time step for reactive and pro-active (look ahead) - L....o....n....g '')')
       write (*,'(''     live            actually command the hardware '')')
       write (*,'(''     flip            allow dish flip mode if crossing the N vector '')')
       write (*,'(''     noovl           removes Az, El commands overlapping in time - hope this cures the MD-02 M2 pulse timeout problem ....... '')')
@@ -2565,9 +2701,14 @@ c
       write (*,'(''     doublec          In certain conditions (point, @horcmd) execute the pointing command twice. This allows the MD-02 to converge better'')')
       write (*,'(''     jumpin           When asking for a single satellite to be tracked, this tries to jump in live if the sat is above the horizon'')')
       write (*,'(''     hmask            Use the user defined (in the code) horizon mask to determine the start and end of a pass - my location derived from L-band'')')
+      write (*,'(''                      This switch is also useful if running like : ./tletrack.exe @./examples/tlesats.txt beam=0.6 predict=9 hmask'')')
+      write (*,'(''                      This generates the visible passes in the next 9 hours - with azel plots in TLE directory: green - visible, red - invisible at start of pass'')')
+      write (*,'(''                      yellow - invisible at end of pass, purple - when green, visibility for co-visibility station requested'')')
+      write (*,'(''     covis=xxx        Analyse the co-visibility of other groundstations - used to catch satellites when dumping to commercial groundstations.'')')
+      write (*,'(''                      Currently xxx=KIR (Kiruna) and SVB (Svallbard) are supported'')')
       write (*,'('' '')')
-      write (*,'('' The TLE environment variable defines where to find the TLE files '')')
-      write (*,'('' The LONG and LAT environment variables defined the geographic location of the dish (also used for JPL HORIZONS)'')')
+      write (*,'('' The TLE environment variable defines where to find the TLE files and where the azel plots will be deposited '')')
+      write (*,'('' The LONG and LAT environment variables define the geographic location of the dish (also used for JPL HORIZONS)'')')
 c
       return
       end
